@@ -1,0 +1,187 @@
+# Configuração visual do Doova.
+# Altere textos padrão, cores, tamanhos e posições aqui, sem mexer no código.
+# Cores aceitam hexadecimal (#RRGGBB) ou um nome da paleta abaixo (pink, red, ...).
+# Tamanhos são o máximo em pixels; o sistema reduz automaticamente se o texto não couber
+# e recusa a arte (em vez de cortar texto) se nem o tamanho mínimo legível couber.
+
+brand:
+  name: Doova
+  logo_text: doova
+  logo_image: null          # opcional: caminho para um PNG transparente do logotipo oficial
+  handle: null              # preencha com o @ real do perfil, por exemplo "@doova"
+  location: "Iporá - GO"
+  canvas: {width: 1080, height: 1350}
+  colors:
+    pink: "#FF00D0"
+    red: "#FF0000"
+    white: "#FFFFFF"
+    ink: "#1C1020"
+    soft: "#FFF2FC"
+    muted: "#6B5A68"
+    night: "#16000F"
+  min_font_sizes: {title: 46, subtitle: 30, body: 27, item: 27, cta: 28, tag: 24}
+  max_lines: {title: 5, subtitle: 4, body: 8, item: 3}
+
+# Valores aplicados a todos os templates (cada template pode sobrescrever).
+defaults:
+  primary_color: pink
+  accent_color: red
+  text_color: auto
+  background: gradient       # gradient | solid | light | dark
+  title_position: center     # top | center | bottom
+  subtitle_position: below_title   # above_title | below_title
+  text_align: left           # left | center
+  logo_position: top_left    # top_left | top_right
+  cta_align: left            # left | center
+  title_size: 96
+  subtitle_size: 44
+  body_size: 34
+  cta_size: 34
+  tag_size: 28
+  margin: 84
+  shapes: true
+  show_logo: true
+  show_location: true
+
+templates:
+  beneficios:
+    name: Benefícios do aplicativo
+    description: Gradiente rosa-vermelho com cartões numerados para listar vantagens.
+    message_type: beneficio
+    item_style: cards
+    defaults:
+      tag: Por que usar o Doova
+      title: Serviço perto de você, sem complicação
+      subtitle: Um só lugar para quem oferece e para quem precisa contratar.
+      items: []
+      cta: Conheça o Doova
+
+  pergunta:
+    name: Pergunta para interação
+    description: Fundo claro, ponto de interrogação gigante e convite para comentar.
+    message_type: pergunta
+    item_style: checks
+    defaults:
+      background: light
+      tag: Queremos ouvir você
+      title: Qual serviço você mais tem dificuldade de encontrar?
+      subtitle: Conte nos comentários.
+      cta: Responda nos comentários
+      title_size: 92
+
+  educativo:
+    name: Conteúdo educativo
+    description: Faixa superior colorida e passos numerados sobre prestação de serviços.
+    message_type: informacao
+    item_style: numbered
+    defaults:
+      background: light
+      tag: Dica para prestadores
+      title: Como apresentar bem o seu serviço
+      items:
+        - Diga com clareza o que você faz e onde atende.
+        - Combine prazo e valor antes de começar.
+        - Peça permissão antes de mostrar fotos de trabalhos.
+      cta: Salve para consultar depois
+      title_position: top
+      title_size: 84
+      body_size: 32
+
+  autonomos:
+    name: Chamada para trabalhadores autônomos
+    description: Rosa sólido com anéis concêntricos, voltado a quem oferece serviços.
+    message_type: chamada
+    item_style: checks
+    defaults:
+      background: solid
+      tag: Para quem oferece serviços
+      title: Seu trabalho merece ser encontrado
+      subtitle: O Doova está chegando em Iporá para aproximar prestadores de quem precisa contratar.
+      cta: Acompanhe o Doova
+
+  contratantes:
+    name: Para quem procura contratar
+    description: Vermelho com listras diagonais, voltado a quem precisa de um serviço.
+    message_type: beneficio
+    item_style: checks
+    defaults:
+      background: solid
+      primary_color: red
+      accent_color: pink
+      tag: Para quem precisa contratar
+      title: Precisa de um serviço? Comece pelo Doova
+      subtitle: Encontre quem oferece o serviço que você procura na sua região.
+      cta: Conheça o Doova
+
+  funcionalidades:
+    name: Funcionalidades do aplicativo
+    description: Gradiente com ilustração geométrica de celular; use somente funcionalidades reais.
+    message_type: informacao
+    item_style: checks
+    defaults:
+      tag: Como funciona
+      title: Quem oferece e quem contrata, no mesmo lugar
+      subtitle: O Doova conecta pessoas que prestam serviços a pessoas que precisam deles.
+      cta: Conheça o Doova
+      title_size: 84
+
+  aquisicao:
+    name: Campanha de aquisição
+    description: Layout dividido com bloco de cor, selo de localização e botão grande.
+    message_type: chamada
+    item_style: checks
+    defaults:
+      tag: Iporá - GO
+      title: O Doova está chegando em Iporá
+      subtitle: Estamos convidando os primeiros prestadores e clientes da cidade.
+      cta: Siga o perfil para acompanhar
+      title_position: bottom
+      title_size: 100
+      show_location: false
+
+  institucional:
+    name: Institucional
+    description: Fundo escuro, arco em gradiente e marca em destaque.
+    message_type: informacao
+    item_style: checks
+    defaults:
+      background: dark
+      title: Conectando quem faz a quem precisa
+      subtitle: Um marketplace de serviços e trabalhos informais.
+      cta: null
+      text_align: center
+      title_size: 84
+
+  # ---- modelos com foto (exigem photo_id; usados nos assuntos do momento) ----
+  foto_destaque:
+    name: Foto em destaque
+    description: Foto no topo (52% da arte) e painel com o texto embaixo. O crédito da foto aparece sobre ela.
+    message_type: informacao
+    requires_photo: true
+    item_style: checks
+    defaults:
+      background: light
+      tag: Assunto do momento
+      title: Precisa de ajuda com isso?
+      subtitle: No Doova, quem precisa encontra quem faz.
+      cta: Conheça o Doova
+      title_position: top
+      title_size: 74
+      subtitle_size: 38
+      shapes: true
+
+  foto_fundo:
+    name: Foto de fundo
+    description: Foto em tela cheia com véu escuro reforçado automaticamente até o texto ter contraste mínimo.
+    message_type: informacao
+    requires_photo: true
+    item_style: checks
+    defaults:
+      background: dark
+      tag: Assunto do momento
+      title: Precisa de ajuda com isso?
+      subtitle: No Doova, quem precisa encontra quem faz.
+      cta: Conheça o Doova
+      title_position: bottom
+      title_size: 84
+      subtitle_size: 40
