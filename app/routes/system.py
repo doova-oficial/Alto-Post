@@ -35,7 +35,15 @@ def resume(db: Session = Depends(get_db)):
 
 @router.post("/scheduler/tick", summary="Executar tarefas vencidas (para cron externo)", dependencies=[GenerationLimit])
 def tick():
-    return scheduler.tick()
+       # Resposta enxuta: serviços de cron gratuitos recusam respostas grandes.
+       results = scheduler.tick()
+       return {
+           "ok": True,
+           "jobs": {
+               name: ("not_due" if isinstance(r, dict) and r.get("not_due") else "ran")
+               for name, r in results.items()
+           },
+       }
 
 
 @router.post("/scheduler/run/{job}", summary="Executar uma tarefa específica agora", dependencies=[GenerationLimit])
