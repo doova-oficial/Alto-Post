@@ -1,14 +1,5 @@
-# Blueprint do Render (https://render.com/docs/blueprint-spec).
-# Configuração recomendada: serviço web SEMPRE LIGADO (plano pago "starter") + PostgreSQL pago.
-#
-# Por que não o plano gratuito?
-#  * serviços web gratuitos hibernam após 15 min sem tráfego: o agendador interno para
-#    e as publicações agendadas não saem no horário;
-#  * o sistema de arquivos é perdido a cada hibernação/reinício (SQLite seria apagado);
-#  * o PostgreSQL gratuito expira 30 dias após a criação.
-# Alternativa de baixo custo descrita em docs/DEPLOY_RENDER.md (serviço gratuito + cron).
-#
-# Confira os nomes de planos vigentes no painel do Render antes de aplicar.
+# Blueprint do Render para o PLANO GRATUITO (serviço web Free + Neon + cron-job.org).
+# O banco NÃO é criado aqui: use o Neon e cole a DATABASE_URL no painel do Render.
 services:
   - type: web
     name: doova-marketing
@@ -22,9 +13,7 @@ services:
       - key: APP_ENV
         value: production
       - key: DATABASE_URL
-        fromDatabase:
-          name: doova-db
-          property: connectionString
+        sync: false            # cole a connection string do Neon
       - key: ADMIN_API_TOKEN
         generateValue: true
       - key: TOKEN_ENCRYPTION_KEY
@@ -64,7 +53,7 @@ services:
       - key: MIN_MINUTES_BETWEEN_POSTS
         value: "180"
       - key: SCHEDULER_ENABLED
-        value: "true"
+        value: "false"         # quem dispara as tarefas é o cron-job.org
       - key: TIMEZONE
         value: America/Sao_Paulo
       - key: DOCS_ENABLED
@@ -75,9 +64,3 @@ services:
         value: "true"
       - key: TREND_AUTO_MAX_PER_DAY
         value: "1"
-
-databases:
-  - name: doova-db
-    plan: basic-256mb
-    databaseName: doova
-    user: doova
