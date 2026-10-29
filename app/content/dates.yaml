@@ -1,0 +1,24 @@
+# Calendário de datas comemorativas.
+# rule: "fixed:MM-DD" | "nth_weekday:MONTH:WEEKDAY(0=seg):N" | "black_friday"
+# Datas municipais de Iporá devem ser adicionadas em 'regional' somente após
+# conferência em fonte oficial (prefeitura/câmara).
+national:
+  - {key: dia_da_mulher, name: Dia Internacional da Mulher, rule: "fixed:03-08", audience: ambos,
+     idea: "Valorizar mulheres que prestam serviços, sem citar pessoas reais sem autorização", template: institucional}
+  - {key: dia_do_trabalhador, name: Dia do Trabalhador, rule: "fixed:05-01", audience: prestadores,
+     idea: "Reconhecer o trabalho de autônomos e prestadores de serviços", template: autonomos}
+  - {key: dia_das_maes, name: Dia das Mães, rule: "nth_weekday:5:6:2", audience: contratantes,
+     idea: "Serviços que ajudam a preparar a casa ou um presente feito por profissionais locais", template: contratantes}
+  - {key: dia_dos_pais, name: Dia dos Pais, rule: "nth_weekday:8:6:2", audience: contratantes,
+     idea: "Serviços contratados para a data, como reparos ou presentes de profissionais locais", template: contratantes}
+  - {key: dia_do_cliente, name: Dia do Cliente, rule: "fixed:09-15", audience: prestadores,
+     idea: "Dicas de atendimento para prestadores", template: educativo}
+  - {key: dia_micro_pequena_empresa, name: Dia Nacional da Micro e Pequena Empresa, rule: "fixed:10-05",
+     audience: prestadores, idea: "Formalização e organização de quem trabalha por conta própria", template: educativo}
+  - {key: black_friday, name: Black Friday, rule: black_friday, audience: prestadores,
+     idea: "Como prestadores podem se organizar para períodos de maior procura", template: educativo}
+  - {key: natal, name: Natal, rule: "fixed:12-25", audience: contratantes,
+     idea: "Serviços para preparar a casa para as festas", template: contratantes}
+  - {key: ano_novo, name: Ano Novo, rule: "fixed:01-01", audience: prestadores,
+     idea: "Organização e metas realistas para o ano de quem presta serviços", template: educativo}
+regional: []

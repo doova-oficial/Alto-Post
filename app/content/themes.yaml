@@ -1,0 +1,267 @@
+# Biblioteca de temas do Doova. Use apenas fatos reais.
+# Campos: topic, audience (prestadores|contratantes|ambos), content_kind, message_type,
+# template (formato recomendado), objective, tag, title, subtitle, body, items, cta, launch_order.
+# 'launch_order' define o conjunto inicial de publicações de lançamento.
+themes:
+  apresentacao:
+    topic: O que é o Doova
+    audience: ambos
+    content_kind: institutional
+    message_type: informacao
+    template: institucional
+    objective: apresentar a marca
+    title: Conectando quem faz a quem precisa
+    subtitle: Um marketplace de serviços e trabalhos informais.
+    cta: null
+    launch_order: 1
+
+  dois_lados:
+    topic: Como o Doova funciona para os dois lados
+    audience: ambos
+    content_kind: feature
+    message_type: informacao
+    template: funcionalidades
+    objective: explicar a proposta do aplicativo
+    tag: Como funciona
+    title: Quem oferece e quem contrata, no mesmo lugar
+    subtitle: O Doova conecta pessoas que prestam serviços a pessoas que precisam deles.
+    items:
+      - Quem oferece mostra o que faz
+      - Quem precisa encontra quem faz
+    cta: Conheça o Doova
+    launch_order: 2
+
+  chegada_ipora:
+    topic: Chegada do Doova em Iporá
+    audience: ambos
+    content_kind: acquisition
+    message_type: chamada
+    template: aquisicao
+    objective: gerar reconhecimento local e seguidores
+    tag: Iporá - GO
+    title: O Doova está chegando em Iporá
+    subtitle: Estamos convidando os primeiros prestadores e clientes da cidade.
+    cta: Siga o perfil para acompanhar
+    launch_order: 3
+
+  convite_prestadores:
+    topic: Convite transparente aos primeiros prestadores
+    audience: prestadores
+    content_kind: acquisition
+    message_type: chamada
+    template: autonomos
+    objective: atrair os primeiros prestadores reais
+    tag: Para quem oferece serviços
+    title: Seu trabalho merece ser encontrado
+    subtitle: O Doova está começando em Iporá e quer conhecer quem presta serviços na cidade.
+    items:
+      - Serviços de casa, reforma, beleza, aulas e outros
+      - "Sem promessa de clientes: estamos começando juntos"
+    cta: Acompanhe o Doova
+    launch_order: 4
+
+  convite_contratantes:
+    topic: Convite a quem precisa contratar serviços
+    audience: contratantes
+    content_kind: acquisition
+    message_type: beneficio
+    template: contratantes
+    objective: atrair as primeiras pessoas que contratam serviços
+    tag: Para quem precisa contratar
+    title: Precisa de um serviço? Comece pelo Doova
+    subtitle: Um lugar para encontrar quem oferece o serviço que você procura na sua região.
+    cta: Conheça o Doova
+    launch_order: 5
+
+  pergunta_servico_dificil:
+    topic: Serviço mais difícil de encontrar em Iporá
+    audience: contratantes
+    content_kind: engagement
+    message_type: pergunta
+    template: pergunta
+    objective: gerar comentários e entender a demanda local
+    tag: Queremos ouvir você
+    title: Qual serviço você mais tem dificuldade de encontrar?
+    subtitle: Conte nos comentários.
+    cta: Responda nos comentários
+    launch_order: 6
+
+  dica_apresentar_servico:
+    topic: Como apresentar bem um serviço
+    audience: prestadores
+    content_kind: educational
+    message_type: informacao
+    template: educativo
+    objective: entregar valor educativo a prestadores
+    tag: Dica para prestadores
+    title: Como apresentar bem o seu serviço
+    items:
+      - Diga com clareza o que você faz e onde atende.
+      - Combine prazo e valor antes de começar.
+      - Peça permissão antes de mostrar fotos de trabalhos.
+    cta: Salve para consultar depois
+    launch_order: 7
+
+  beneficio_perto:
+    topic: Encontrar serviços perto de você
+    audience: ambos
+    content_kind: feature
+    message_type: beneficio
+    template: beneficios
+    objective: comunicar a proposta de valor
+    tag: Por que usar o Doova
+    title: Serviço perto de você, sem complicação
+    subtitle: Um só lugar para quem oferece e para quem precisa contratar.
+    items:
+      - Quem precisa encontra quem oferece
+      - Quem oferece ganha um lugar para divulgar
+      - Tudo pensado para a região
+    cta: Conheça o Doova
+    launch_order: 8
+
+  pergunta_servico_oferece:
+    topic: Que serviço você oferece
+    audience: prestadores
+    content_kind: engagement
+    message_type: pergunta
+    template: pergunta
+    objective: mapear prestadores e gerar comentários
+    tag: Para prestadores
+    title: Que serviço você oferece em Iporá?
+    subtitle: Conte nos comentários o que você faz.
+    cta: Comente aqui
+    launch_order: 9
+
+  dica_contratar:
+    topic: O que combinar antes de contratar
+    audience: contratantes
+    content_kind: educational
+    message_type: informacao
+    template: educativo
+    objective: entregar valor educativo a quem contrata
+    tag: Dica para quem contrata
+    title: Antes de contratar, combine o essencial
+    items:
+      - O que exatamente será feito
+      - Prazo e forma de pagamento
+      - Quem fornece o material
+    cta: Salve para a próxima contratação
+    launch_order: 10
+
+  dica_orcamento:
+    topic: Orçamento claro
+    audience: prestadores
+    content_kind: educational
+    message_type: informacao
+    template: educativo
+    objective: entregar valor educativo a prestadores
+    tag: Dica para prestadores
+    title: Um orçamento claro evita desencontros
+    items:
+      - Descreva o serviço e o que não está incluído
+      - Informe o prazo estimado
+      - Registre o combinado por escrito
+    cta: Salve para consultar depois
+    launch_order: 11
+
+  valores_marca:
+    topic: Compromisso com informação verdadeira
+    audience: ambos
+    content_kind: institutional
+    message_type: informacao
+    template: institucional
+    objective: construir confiança
+    title: Sem promessas vazias
+    subtitle: Aqui você vai ver só informação real sobre o Doova e sobre serviços.
+    cta: null
+    launch_order: 12
+
+  pergunta_como_encontra:
+    topic: Como as pessoas encontram profissionais hoje
+    audience: contratantes
+    content_kind: engagement
+    message_type: pergunta
+    template: pergunta
+    objective: entender hábitos de contratação
+    tag: Queremos ouvir você
+    title: Como você encontra um profissional hoje?
+    subtitle: Indicação, grupo de mensagens, redes sociais? Conte para a gente.
+    cta: Responda nos comentários
+
+  dica_divulgacao:
+    topic: Divulgar o próprio serviço
+    audience: prestadores
+    content_kind: educational
+    message_type: informacao
+    template: educativo
+    objective: entregar valor educativo a prestadores
+    tag: Dica para prestadores
+    title: Três cuidados ao divulgar seu serviço
+    items:
+      - Use fotos nítidas de trabalhos que você fez
+      - Informe a região em que atende
+      - Responda as mensagens com rapidez
+    cta: Salve para consultar depois
+
+  dica_mei:
+    topic: Formalização como MEI
+    audience: prestadores
+    content_kind: educational
+    message_type: informacao
+    template: educativo
+    objective: informar sobre formalização
+    tag: Para autônomos
+    title: Você já sabe o que é MEI?
+    items:
+      - É uma forma de formalizar quem trabalha por conta própria
+      - As regras e atividades permitidas estão no portal oficial do governo
+      - Veja se faz sentido para o seu caso
+    cta: Pesquise no gov.br
+
+  institucional_regiao:
+    topic: O Doova começa pela região de Iporá
+    audience: ambos
+    content_kind: institutional
+    message_type: informacao
+    template: aquisicao
+    objective: reforçar a presença local
+    tag: Iporá - GO
+    title: Começando por Iporá e região
+    subtitle: O Doova nasce para aproximar prestadores e clientes daqui.
+    cta: Siga o perfil
+
+# Perguntas frequentes de trabalhadores autônomos (fonte de pautas educativas).
+faq:
+  - Como definir o preço do meu serviço?
+  - Como divulgar meu trabalho sem gastar muito?
+  - Como fazer um orçamento que o cliente entenda?
+  - Vale a pena me formalizar como MEI?
+  - Como lidar com cancelamentos e atrasos de pagamento?
+  - Como mostrar trabalhos anteriores com permissão do cliente?
+
+# Palavras usadas para filtrar tendências de busca relevantes ao público do Doova.
+trend_keywords:
+  - serviço
+  - serviços
+  - trabalho
+  - emprego
+  - autônomo
+  - mei
+  - diarista
+  - pedreiro
+  - eletricista
+  - encanador
+  - pintor
+  - reforma
+  - conserto
+  - manutenção
+  - frete
+  - mudança
+  - faxina
+  - manicure
+  - cabeleireiro
+  - aula particular
+  - renda
+  - iporá
+  - goiás
+  - goiânia
