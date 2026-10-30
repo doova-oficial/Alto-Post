@@ -1,0 +1,83 @@
+# Blueprint do Render (https://render.com/docs/blueprint-spec).
+# Configuração recomendada: serviço web SEMPRE LIGADO (plano pago "starter") + PostgreSQL pago.
+#
+# Por que não o plano gratuito?
+#  * serviços web gratuitos hibernam após 15 min sem tráfego: o agendador interno para
+#    e as publicações agendadas não saem no horário;
+#  * o sistema de arquivos é perdido a cada hibernação/reinício (SQLite seria apagado);
+#  * o PostgreSQL gratuito expira 30 dias após a criação.
+# Alternativa de baixo custo descrita em docs/DEPLOY_RENDER.md (serviço gratuito + cron).
+#
+# Confira os nomes de planos vigentes no painel do Render antes de aplicar.
+services:
+  - type: web
+    name: doova-marketing
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: doova-db
+          property: connectionString
+      - key: ADMIN_API_TOKEN
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false            # gere com: python -m app.cli gen-key
+      - key: PUBLIC_BASE_URL
+        sync: false            # ex.: https://doova-marketing.onrender.com
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: META_LOGIN_TYPE
+        value: unified
+      - key: META_GRAPH_API_VERSION
+        value: v26.0
+      - key: META_IG_USER_ID
+        sync: false
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      # Comece em simulação (DRY_RUN=true); troque para false quando a Meta estiver conectada.
+      # Modo automático: sem aprovação manual, com checagens automáticas e alertas.
+      - key: DRY_RUN
+        value: "true"
+      - key: REQUIRE_MANUAL_APPROVAL
+        value: "false"
+      - key: AUTO_SCHEDULE
+        value: "true"
+      - key: POSTING_STRATEGY
+        value: adaptive
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: MAX_POSTS_PER_DAY
+        value: "2"
+      - key: MIN_MINUTES_BETWEEN_POSTS
+        value: "180"
+      - key: SCHEDULER_ENABLED
+        value: "true"
+      - key: TIMEZONE
+        value: America/Sao_Paulo
+      - key: DOCS_ENABLED
+        value: "true"
+      - key: PIXABAY_API_KEY
+        sync: false
+      - key: TREND_AUTO_ENABLED
+        value: "true"
+      - key: TREND_AUTO_MAX_PER_DAY
+        value: "1"
+
+databases:
+  - name: doova-db
+    plan: basic-256mb
+    databaseName: doova
+    user: doova

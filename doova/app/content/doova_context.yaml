@@ -1,0 +1,21 @@
+# Fatos sobre o Doova que a IA pode usar nas legendas.
+# Mantenha somente informações verdadeiras. Inclua funcionalidades apenas depois
+# que estiverem disponíveis no aplicativo.
+brand: Doova
+description: >-
+  Marketplace de trabalhos informais e serviços que conecta pessoas que oferecem
+  serviços (trabalhadores autônomos e prestadores) a pessoas que precisam contratá-los.
+region: Iporá, Goiás, Brasil (região inicial de aquisição de usuários)
+stage: lançamento — perfil novo, ainda sem base de usuários divulgável
+real_features: []
+  # exemplos (descomente somente quando forem reais):
+  # - Cadastro de prestador com descrição dos serviços oferecidos
+  # - Busca de prestadores por categoria
+links: []
+never_claim:
+  - número de usuários, downloads ou prestadores cadastrados
+  - depoimentos ou histórias de clientes
+  - vagas ou oportunidades de trabalho não verificadas
+  - renda, ganhos ou clientes garantidos
+  - parcerias, prêmios ou resultados comerciais
+  - funcionalidades que não estejam listadas em real_features
