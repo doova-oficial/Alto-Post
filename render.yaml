@@ -1,0 +1,66 @@
+# Blueprint do Render para o PLANO GRATUITO (serviço web Free + Neon + cron-job.org).
+# O banco NÃO é criado aqui: use o Neon e cole a DATABASE_URL no painel do Render.
+services:
+  - type: web
+    name: doova-marketing
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false            # cole a connection string do Neon
+      - key: ADMIN_API_TOKEN
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false            # gere com: python -m app.cli gen-key
+      - key: PUBLIC_BASE_URL
+        sync: false            # ex.: https://doova-marketing.onrender.com
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: META_LOGIN_TYPE
+        value: instagram
+      - key: META_GRAPH_API_VERSION
+        value: v26.0
+      - key: META_IG_USER_ID
+        sync: false
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      # Comece em simulação (DRY_RUN=true); troque para false quando a Meta estiver conectada.
+      # Modo automático: sem aprovação manual, com checagens automáticas e alertas.
+      - key: DRY_RUN
+        value: "true"
+      - key: REQUIRE_MANUAL_APPROVAL
+        value: "false"
+      - key: AUTO_SCHEDULE
+        value: "true"
+      - key: POSTING_STRATEGY
+        value: adaptive
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: MAX_POSTS_PER_DAY
+        value: "2"
+      - key: MIN_MINUTES_BETWEEN_POSTS
+        value: "180"
+      - key: SCHEDULER_ENABLED
+        value: "false"         # quem dispara as tarefas é o cron-job.org
+      - key: TIMEZONE
+        value: America/Sao_Paulo
+      - key: DOCS_ENABLED
+        value: "true"
+      - key: PIXABAY_API_KEY
+        sync: false
+      - key: TREND_AUTO_ENABLED
+        value: "true"
+      - key: TREND_AUTO_MAX_PER_DAY
+        value: "1"
