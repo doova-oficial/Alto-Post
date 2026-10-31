@@ -36,7 +36,7 @@ services:
       - key: GROQ_MODEL
         value: openai/gpt-oss-120b
       - key: META_LOGIN_TYPE
-        value: instagram
+        value: unified
       - key: META_GRAPH_API_VERSION
         value: v26.0
       - key: META_IG_USER_ID

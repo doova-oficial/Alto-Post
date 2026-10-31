@@ -200,3 +200,26 @@ Antes de desligar a simulação, siga o roteiro de validação em [docs/META_SET
 ## Licenças
 
 A fonte Inter (`app/assets/fonts`) é distribuída sob a SIL Open Font License 1.1 (ver `LICENSE-Inter.txt`).
+
+## Elementos gráficos do app nas artes
+
+As artes usam a linguagem visual do app (módulo `app/services/app_ui.py`): chips de categoria,
+stories com anel rosa, ícones de linha, pins do mapa, barra de navegação e celular com a tela inicial.
+Textos de preço e nomes de pessoas nunca são inventados (aparecem como barras neutras).
+
+| Modelo | Elementos do app |
+|---|---|
+| beneficios | etiqueta com chama + stories ao lado do botão |
+| pergunta | etiqueta preta com ícone de comentário + coração/comentário/enviar |
+| educativo | chips Todos/Limpeza/Construção/Elétrica/Frete + etiqueta com chama |
+| autonomos | pins amarelo e rosa do mapa |
+| contratantes | barra de busca "O que você precisa fazer hoje" + chips |
+| funcionalidades | celular com a tela inicial do app (Doova, stories, post, CONTRATAR, navegação) |
+| aquisicao | etiqueta com pin de localização + pins do mapa |
+| institucional | barra de navegação inferior |
+| foto_destaque / foto_fundo | contador 1/3, etiqueta com chama, ações do post |
+
+O logotipo é só o pin (`app/assets/logo_pin.png`), pintado conforme o fundo: branco em rosa, vermelho, escuro e foto; gradiente da marca em fundo claro.
+
+Para desligar tudo, use `app_ui: false` em `defaults` (ou em um template) no `templates.yaml`.
+As cores do app ficam em `brand.colors` (`app_pink`, `app_yellow`, `app_black`, `app_gray`, `app_bar`...).

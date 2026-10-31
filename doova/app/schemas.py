@@ -41,6 +41,7 @@ class ArtParams(BaseModel):
     shapes: bool | None = None
     show_logo: bool | None = None
     show_location: bool | None = None
+    app_ui: bool | None = None   # elementos gráficos do app (chips, stories, pins, navegação)
     item_style: Literal["cards", "numbered", "checks"] | None = None
     photo_id: str | None = Field(default=None, max_length=40, description="foto importada (GET /api/photos)")
     photo_focus_y: float | None = Field(default=None, ge=0, le=1)

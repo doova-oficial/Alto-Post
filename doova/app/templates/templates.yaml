@@ -7,7 +7,8 @@
 brand:
   name: Doova
   logo_text: doova
-  logo_image: null          # opcional: caminho para um PNG transparente do logotipo oficial
+  logo_image: app/assets/logo_pin.png   # pin do logotipo (branco, transparente; é pintado conforme o fundo); null = texto "doova"
+  logo_height: 88           # altura do logotipo no cabeçalho (px)
   handle: null              # preencha com o @ real do perfil, por exemplo "@doova"
   location: "Iporá - GO"
   canvas: {width: 1080, height: 1350}
@@ -19,6 +20,14 @@ brand:
     soft: "#FFF2FC"
     muted: "#6B5A68"
     night: "#16000F"
+    # cores medidas nas telas do app (usadas pelos elementos gráficos do app)
+    app_pink: "#F01478"       # chama, anel de story, pin do perfil
+    app_yellow: "#E8B000"     # pin amarelo do mapa
+    app_black: "#0A0A0A"      # chip ativo e botão "+"
+    app_gray: "#E6E6E6"       # chip inativo e avatar vazio
+    app_bar: "#8E8E93"        # barra "R$ / CONTRATAR"
+    app_like: "#FF2030"       # coração curtido
+    app_silhouette: "#A8A8A8"
   min_font_sizes: {title: 46, subtitle: 30, body: 27, item: 27, cta: 28, tag: 24}
   max_lines: {title: 5, subtitle: 4, body: 8, item: 3}
 
@@ -42,6 +51,7 @@ defaults:
   shapes: true
   show_logo: true
   show_location: true
+  app_ui: true               # false = artes sem os elementos gráficos do app
 
 templates:
   beneficios:

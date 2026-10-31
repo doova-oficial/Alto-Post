@@ -19,8 +19,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+from app.services import app_ui as ui
 from app.services.fonts import FontResolver, get_font_resolver
 from app.services.template_config import (
     TemplateConfig,
@@ -54,6 +57,7 @@ class Element:
     item_style: str = "checks"
     item_colors: dict[str, RGB] = field(default_factory=dict)
     min_key: str | None = None
+    icon: str | None = None       # ícone do app dentro da pílula (tag)
 
 
 @dataclass
@@ -96,6 +100,8 @@ class Renderer:
         self.placed: list[dict[str, Any]] = []
         self.warnings: list[str] = []
         self.bg_colors: list[RGB] = []
+        self.tag_icon: str | None = None   # ícone do app na etiqueta (tag)
+        self.tag_icon_color: RGB | None = None
 
     # ------------------------------------------------------------ primitivas
     def font(self, weight: str, size: int):
@@ -162,21 +168,69 @@ class Renderer:
         return main
 
     # -------------------------------------------------------------- marca
+    def logo_image(self) -> Image.Image | None:
+        """Logotipo oficial (PNG transparente) configurado em brand.logo_image, ou None."""
+        path = self.cfg.brand.get("logo_image")
+        if not path:
+            return None
+        p = Path(path)
+        if not p.is_absolute():
+            p = PROJECT_ROOT / p
+        if not p.is_file():
+            return None
+        return Image.open(p).convert("RGBA")
+
+    def paste_logo(self, x: float, y: float, h: int, tint: str | RGB = "white") -> int:
+        """Cola o pin do logotipo (sem o quadrado de fundo) com altura h, pintado em ``tint``:
+        "white", "gradient" (rosa -> vermelho da marca) ou uma cor RGB. Retorna a largura."""
+        lg = self.logo_image()
+        assert lg is not None
+        w = max(1, round(lg.width * h / lg.height))
+        mask = lg.getchannel("A").resize((w, h), Image.LANCZOS)
+        if tint == "gradient":
+            side = max(w, h)
+            g = Image.linear_gradient("L").resize((side, side)).rotate(45, resample=Image.BICUBIC, expand=False)
+            g = g.crop(((side - w) // 2, (side - h) // 2, (side - w) // 2 + w, (side - h) // 2 + h)) if side >= max(w, h) else g
+            g = g.resize((w, h))
+            fill = Image.composite(Image.new("RGBA", (w, h), self.accent + (255,)),
+                                   Image.new("RGBA", (w, h), self.primary + (255,)), g)
+        else:
+            rgb = self.white if tint == "white" else tint
+            fill = Image.new("RGBA", (w, h), tuple(rgb) + (255,))  # type: ignore[arg-type]
+        if tint == "white":  # sombra suave: o pin branco continua legível sobre fotos e fundos claros
+            pad = max(8, h // 5)
+            sh = Image.new("RGBA", (w + 2 * pad, h + 2 * pad), (0, 0, 0, 0))
+            sh.paste((0, 0, 0, 70), (pad, pad + max(2, h // 28)), mask)
+            sh = sh.filter(ImageFilter.GaussianBlur(max(3, h // 18)))
+            self.img.alpha_composite(sh, (int(x) - pad, int(y) - pad))
+        fill.putalpha(mask)
+        self.img.alpha_composite(fill, (int(x), int(y)))
+        return w
+
+    # -------------------------------------------------------------- marca
+    def logo_tint(self, color: RGB) -> str:
+        """Pin branco sobre fundos coloridos, escuros ou fotos; gradiente da marca sobre fundos claros."""
+        if color == self.white or not self.bg_colors:
+            return "white"
+        return "gradient" if all(luminance(b) > 0.7 for b in self.bg_colors) else "white"
+
     def logo_row(self, color: RGB, dot: RGB | None = None) -> int:
-        """Desenha logotipo (texto ou imagem) e localização. Retorna a coordenada y abaixo da linha."""
+        """Desenha logotipo (imagem ou texto) e localização. Retorna a coordenada y abaixo da linha."""
         y = self.m - 20
         row_h = 60
         if not self.p.show_logo and not self.p.show_location:
             return self.m
         left_is_logo = self.p.logo_position == "top_left"
+        has_img = self.logo_image() is not None
+        if has_img and self.p.show_logo:
+            row_h = int(self.cfg.brand.get("logo_height", 78))
         if self.p.show_logo:
-            logo_img = self.cfg.brand.get("logo_image")
-            if logo_img and Path(logo_img).is_file():
-                lg = Image.open(logo_img).convert("RGBA")
-                ratio = row_h / lg.height
-                lg = lg.resize((max(1, int(lg.width * ratio)), row_h))
-                x = self.m if left_is_logo else self.W - self.m - lg.width
-                self.img.alpha_composite(lg, (int(x), y))
+            if has_img:
+                lg = self.logo_image()
+                w = max(1, round(lg.width * row_h / lg.height))
+                x = self.m if left_is_logo else self.W - self.m - w
+                self.paste_logo(x, y - (row_h - 60) // 2, row_h, tint=self.logo_tint(color))
+                self._place("logo", (x, y - (row_h - 60) // 2, x + w, y - (row_h - 60) // 2 + row_h), row_h, 1)
             else:
                 text = self.cfg.brand.get("logo_text", "doova")
                 f = self.font("extrabold", 52)
@@ -188,28 +242,28 @@ class Renderer:
                 cx = x + w + 6 + dot_r
                 cy = y + row_h / 2 + 12
                 self.draw.ellipse((cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r), fill=dot or self.accent)
-            self._place("logo", (self.m, y, self.W - self.m, y + row_h), 52, 1)
+                self._place("logo", (self.m, y, self.W - self.m, y + row_h), 52, 1)
         loc = self.cfg.brand.get("handle") or (self.cfg.brand.get("location") if self.p.show_location else None)
         if loc:
             f = self.font("semibold", 28)
             w = text_width(f, loc)
             x = self.W - self.m - w if left_is_logo else self.m
-            self.draw.text((x, y + row_h / 2), loc, font=f, fill=color, anchor="lm")
-        return y + row_h
+            self.draw.text((x, y + 30), loc, font=f, fill=color, anchor="lm")
+        return y + max(row_h, 60) + (0 if row_h <= 60 else (row_h - 60) // 2)
 
     def content_top(self, logo_bottom: int) -> int:
         return logo_bottom + 56
 
     # --------------------------------------------------------------- pílula
     def measure_pill(self, text: str, size: int, weight: str = "bold", pad_x: int | None = None,
-                     max_width: int | None = None) -> tuple[int, int, int]:
+                     max_width: int | None = None, icon: bool = False) -> tuple[int, int, int]:
         min_size = self.min_sizes.get("cta", 24)
         max_width = max_width or (self.W - 2 * self.m)
         s = size
         while True:
             f = self.font(weight, s)
             px = pad_x if pad_x is not None else int(s * 1.1)
-            w = int(text_width(f, text)) + 2 * px
+            w = int(text_width(f, text)) + 2 * px + (int(s * 1.5) if icon else 0)
             h = int(s * 2.1)
             if w <= max_width:
                 return w, h, s
@@ -218,11 +272,18 @@ class Renderer:
             s -= 2
 
     def pill(self, x: float, y: float, text: str, size: int, bg: RGB | None, fg: RGB, weight: str = "bold",
-             outline: RGB | None = None, name: str = "pill", max_width: int | None = None) -> tuple[int, int]:
-        w, h, s = self.measure_pill(text, size, weight, max_width=max_width)
+             outline: RGB | None = None, name: str = "pill", max_width: int | None = None,
+             icon: str | None = None, icon_color: RGB | None = None) -> tuple[int, int]:
+        w, h, s = self.measure_pill(text, size, weight, max_width=max_width, icon=bool(icon))
         box = (int(x), int(y), int(x + w), int(y + h))
-        self.draw.rounded_rectangle(box, radius=h // 2, fill=bg, outline=outline, width=4 if outline else 0)
-        self.draw.text((x + w / 2, y + h / 2), text, font=self.font(weight, s), fill=fg, anchor="mm")
+        ui.round_rect(self, box, h / 2, fill=bg, outline=outline, width=4 if outline else 0) if bg or outline else None
+        shift = 0
+        if icon:
+            ic = int(s * 1.0)
+            ui.icon_c(self, icon, x + s * 1.1 + ic / 2, y + h / 2, ic, icon_color or ui.col(self, "app_pink"),
+                      fill=True, stroke=9)
+            shift = int(s * 1.5) / 2
+        self.draw.text((x + w / 2 + shift, y + h / 2), text, font=self.font(weight, s), fill=fg, anchor="mm")
         self._place(name, box, s, 1)
         return w, h
 
@@ -252,7 +313,8 @@ class Renderer:
         p = self.p
         els: list[Element] = []
         if include_tag and p.tag:
-            els.append(Element("tag", p.tag, "bold", p.tag_size, tag_fg, gap_after=34, pill_bg=tag_bg))
+            els.append(Element("tag", p.tag, "bold", p.tag_size, tag_fg, gap_after=34, pill_bg=tag_bg,
+                               icon=self.tag_icon if p.app_ui else None))
         sub = Element("subtitle", p.subtitle, "medium", p.subtitle_size, sub_color, gap_after=30,
                       line_spacing=1.22) if p.subtitle else None
         if sub and p.subtitle_position == "above_title":
@@ -279,10 +341,13 @@ class Renderer:
         size = max(self._min_size(el), round(el.base_size * scale))
         if el.name == "tag":
             try:
-                w, h, s = self.measure_pill(el.text, size, max_width=width)
+                w, h, s = self.measure_pill(el.text, size, max_width=width, icon=bool(el.icon))
             except TextOverflowError:
                 return None
             return Laid(el, h, s, [], width=w)
+        if el.name == "logo":  # logotipo oficial como bloco do layout (altura = size)
+            lg = self.logo_image()
+            return Laid(el, size, size, [], width=round(lg.width * size / lg.height)) if lg else None
         font = self.font(el.weight, size)
         if el.name == "items":
             blocks = []
@@ -348,10 +413,16 @@ class Renderer:
         el = item.el
         if el.name == "tag":
             x = x0 if align == "left" else x0 + (width - item.width) / 2
-            self.pill(x, y, el.text, item.size, el.pill_bg, el.color, name="tag", max_width=width)
+            self.pill(x, y, el.text, item.size, el.pill_bg, el.color, name="tag", max_width=width, icon=el.icon,
+                      icon_color=self.tag_icon_color)
             return
         if el.name == "items":
             self._draw_items(item, x0, y, width)
+            return
+        if el.name == "logo":
+            x = x0 if align == "left" else x0 + (width - item.width) / 2
+            self.paste_logo(x, y, item.size, tint="gradient")
+            self._place("logo_large", (int(x), int(y), int(x + item.width), int(y + item.size)), item.size, 1)
             return
         b = item.blocks[0]
         draw_block(self.draw, b, x0, y, el.color, align=align, box_width=width)
@@ -449,6 +520,37 @@ class Renderer:
                        anchor="mm")
         self._place("photo_credit", box, size, 1)
 
+    # ------------------------------------------------- elementos gráficos do app
+    def cta_box(self) -> tuple[int, int, int, int] | None:
+        for el in reversed(self.placed):
+            if el["name"] == "cta":
+                return tuple(el["box"])  # type: ignore[return-value]
+        return None
+
+    def actions_beside_cta(self, color: RGB, size: int = 60) -> None:
+        """Coração, comentário e enviar à direita do botão (como a barra de ações de um post)."""
+        if not self.p.app_ui:
+            return
+        box = self.cta_box()
+        step = int(size * 1.55)
+        total = 2 * step + size
+        if box is None:
+            return
+        x = self.W - self.m - total
+        if box[2] + 36 > x:
+            return
+        ui.actions(self, x, (box[1] + box[3]) / 2, size, color)
+
+    def stories_cluster(self, right: int, cy: int, d: int = 112, gap_color: RGB | None = None) -> None:
+        """Três stories sobrepostos (o primeiro com botão "+" como em "Seu story")."""
+        if not self.p.app_ui:
+            return
+        gap_color = gap_color or self.white
+        step = int(d * 0.78)
+        for i in (2, 1, 0):  # da direita para a esquerda: o "+" do primeiro fica por cima
+            cx = right - d / 2 - (2 - i) * step
+            ui.story(self, cx, cy, d, ring=(i != 0), plus=(i == 0), gap_color=gap_color)
+
     def check_bounds(self) -> None:
         for el in self.placed:
             x0, y0, x1, y1 = el["box"]
@@ -465,6 +567,33 @@ class Renderer:
 
 
 # ============================================================== templates
+def mix_rgb(a: RGB, b: RGB, t: float) -> RGB:
+    return ui.mix(a, b, t)
+
+
+def _geometric_phone(r: Renderer, box: tuple[int, int, int, int]) -> None:
+    """Ilustração geométrica de celular (versão sem os elementos do app, usada com app_ui: false)."""
+    px0, py0, px1, py1 = box
+    ov, d = r.shape_layer()
+    d.rounded_rectangle((px0 + 18, py0 + 22, px1 + 18, py1 + 22), radius=48, fill=(0, 0, 0, 40))
+    d.rounded_rectangle((px0, py0, px1, py1), radius=48, fill=(255, 255, 255, 255))
+    d.rounded_rectangle((px0 + 18, py0 + 18, px1 - 18, py1 - 18), radius=34, fill=r.soft + (255,))
+    d.rounded_rectangle(((px0 + px1) / 2 - 40, py0 + 30, (px0 + px1) / 2 + 40, py0 + 44), radius=7,
+                        fill=r.muted + (90,))
+    yy = py0 + 80
+    for k, w in enumerate((0.8, 0.55, 0.7)):
+        d.rounded_rectangle((px0 + 40, yy, px0 + 40 + (px1 - px0 - 80) * w, yy + 22), radius=11,
+                            fill=(r.primary if k == 0 else r.muted) + (200 if k == 0 else 90,))
+        yy += 44
+    for k in range(3):
+        d.rounded_rectangle((px0 + 40, yy + 10, px1 - 40, yy + 94), radius=20, fill=(255, 255, 255, 255))
+        d.ellipse((px0 + 56, yy + 26, px0 + 108, yy + 78), fill=(r.primary if k % 2 == 0 else r.accent) + (255,))
+        d.rounded_rectangle((px0 + 124, yy + 34, px1 - 64, yy + 50), radius=8, fill=r.muted + (110,))
+        d.rounded_rectangle((px0 + 124, yy + 60, px1 - 110, yy + 72), radius=6, fill=r.muted + (60,))
+        yy += 110
+    r.commit(ov)
+
+
 def _region(r: Renderer, top: int, bottom: int, left: int | None = None, right: int | None = None):
     return (left if left is not None else r.m, top, right if right is not None else r.W - r.m, bottom)
 
@@ -479,7 +608,11 @@ def t_beneficios(r: Renderer) -> dict:
         d.ellipse((r.W - 210, r.H - 560, r.W - 90, r.H - 440), outline=(255, 255, 255, 90), width=8)
         r.commit(ov)
     top = r.content_top(r.logo_row(fg, dot=r.white if fg == r.white else r.accent))
+    r.tag_icon = "flame"
     cta_top = r.cta(r.white, r.primary)
+    box = r.cta_box()
+    if r.p.app_ui and box and box[2] + 40 < r.W - r.m - 330:
+        r.stories_cluster(r.W - r.m, (box[1] + box[3]) // 2, d=int((box[3] - box[1]) * 1.5))
     els = r.standard_elements(fg, fg, fg, r.white, r.primary,
                               item_colors={"card_bg": r.white, "text": r.ink, "badge_bg": r.primary,
                                            "badge_fg": r.white})
@@ -496,11 +629,15 @@ def t_pergunta(r: Renderer) -> dict:
         f = r.font("extrabold", 900)
         d.text((r.W + 60, r.H - 40), "?", font=f, fill=r.accent + (40,), anchor="rd")
         d.rectangle((0, 0, 22, r.H), fill=r.primary + (255,))
-        d.ellipse((r.W - 150, 150, r.W - 90, 210), fill=r.primary + (255,))
+        if r.logo_image() is None:
+            d.ellipse((r.W - 150, 150, r.W - 90, 210), fill=r.primary + (255,))
         r.commit(ov)
     top = r.content_top(r.logo_row(r.primary if fg == r.ink else fg))
     cta_top = r.cta(None, r.accent if fg == r.ink else fg, outline=r.accent if fg == r.ink else fg)
-    tag_bg = r.primary
+    r.actions_beside_cta(fg)
+    tag_bg = ui.col(r, "app_black") if r.p.app_ui else r.primary
+    r.tag_icon = "comment"
+    r.tag_icon_color = r.white
     els = r.standard_elements(fg, sub, sub, tag_bg, r.white)
     r.stack(els, _region(r, top, cta_top - 56))
     return {"text": fg}
@@ -513,7 +650,9 @@ def t_educativo(r: Renderer) -> dict:
     band_h = r.m + 120
     r.rect((0, 0, r.W, band_h), r.primary)
     r.rect((0, band_h, r.W, band_h + 14), r.accent)
-    if r.p.shapes:
+    if r.p.shapes and r.logo_image() is not None:
+        r.paste_logo(r.W - r.m - 118, r.H - r.m - 144, 144, tint="gradient")  # pin no lugar da grade de pontos
+    elif r.p.shapes:
         ov, d = r.shape_layer()
         for i in range(6):
             for j in range(6):
@@ -524,7 +663,15 @@ def t_educativo(r: Renderer) -> dict:
     logo_bottom = r.logo_row(r.white, dot=r.white)
     top = max(r.content_top(logo_bottom), band_h + 64)
     cta_top = r.cta(r.primary, r.white)
-    els = r.standard_elements(fg, sub, sub, r.accent, r.white,
+    if r.p.app_ui:
+        # chips de categoria do app logo abaixo da faixa
+        _, chip_h = ui.chip_row(r, r.m, band_h + 14 + 40, ["Todos", "Limpeza", "Construção", "Elétrica", "Frete"],
+                                size=28, active=0)
+        top = max(top, band_h + 14 + 40 + chip_h + 48)
+        tag_bg, r.tag_icon = ui.col(r, "app_black"), "flame"
+    else:
+        tag_bg = r.accent
+    els = r.standard_elements(fg, sub, sub, tag_bg, r.white,
                               item_colors={"badge_bg": r.primary, "badge_fg": r.white, "text": fg})
     r.stack(els, _region(r, top, cta_top - 56))
     return {"text": fg}
@@ -544,9 +691,18 @@ def t_autonomos(r: Renderer) -> dict:
         r.commit(ov)
     top = r.content_top(r.logo_row(fg))
     cta_top = r.cta(r.white, r.primary)
+    bottom = cta_top - 64
+    if r.p.app_ui:
+        # pins do mapa: "seu trabalho merece ser encontrado"
+        pw = 132
+        tip = r.H - r.m
+        ui.map_pin(r, r.W - r.m - 210, tip, pw, ui.col(r, "app_yellow"), label="J")
+        ui.map_pin(r, r.W - r.m - 70, tip, pw, ui.col(r, "app_pink"), face=True)
+        bottom = min(bottom, tip - int(pw * 1.45) - 36)
+        r.tag_icon = "pin"
     els = r.standard_elements(fg, fg, fg, r.white, r.primary,
                               item_colors={"badge_bg": r.white, "badge_fg": r.primary, "text": fg})
-    r.stack(els, _region(r, top, cta_top - 64))
+    r.stack(els, _region(r, top, bottom))
     return {"text": fg}
 
 
@@ -561,6 +717,19 @@ def t_contratantes(r: Renderer) -> dict:
         r.commit(ov)
     top = r.content_top(r.logo_row(fg, dot=r.accent if fg == r.white else r.primary))
     cta_top = r.cta(r.white, r.primary, bottom=r.H - r.m - 56)
+    if r.p.app_ui:
+        # busca do mapa + chips de categoria
+        sh, sy = 104, top - 10
+        box = (r.m, sy, r.W - r.m, sy + sh)
+        ui.shadow(r, box, 30, blur=14, alpha=60, dy=8)
+        ui.round_rect(r, box, 30, fill=(250, 250, 250))
+        ui.icon_c(r, "home", r.m + 52, sy + sh / 2, 44, (92, 92, 96), stroke=7)
+        ui.icon_c(r, "search", r.W - r.m - 52, sy + sh / 2, 40, (92, 92, 96), stroke=8)
+        r.draw.text((r.m + 104, sy + sh / 2), "O que você precisa fazer hoje", font=r.font("medium", 34),
+                    fill=(110, 110, 114), anchor="lm")
+        r._place("search_bar", box, 34, 1)
+        _, ch = ui.chip_row(r, r.m, sy + sh + 24, ["Limpeza", "Elétrica", "Frete"], size=30, active=-1)
+        top = sy + sh + 24 + ch + 56
     els = r.standard_elements(fg, fg, fg, r.white, r.primary,
                               item_colors={"badge_bg": r.white, "badge_fg": r.primary, "text": fg})
     r.stack(els, _region(r, top, cta_top - 56))
@@ -572,27 +741,13 @@ def t_funcionalidades(r: Renderer) -> dict:
     fg = r.text_on_bg()
     right = r.W - r.m
     if r.p.shapes:
-        # ilustração geométrica de um celular (sem representar telas reais do app)
-        px0, py0, px1, py1 = r.W - 360, 330, r.W - 70, 900
-        ov, d = r.shape_layer()
-        d.rounded_rectangle((px0 + 18, py0 + 22, px1 + 18, py1 + 22), radius=48, fill=(0, 0, 0, 40))
-        d.rounded_rectangle((px0, py0, px1, py1), radius=48, fill=(255, 255, 255, 255))
-        d.rounded_rectangle((px0 + 18, py0 + 18, px1 - 18, py1 - 18), radius=34, fill=r.soft + (255,))
-        d.rounded_rectangle(((px0 + px1) / 2 - 40, py0 + 30, (px0 + px1) / 2 + 40, py0 + 44), radius=7,
-                            fill=r.muted + (90,))
-        yy = py0 + 80
-        for k, w in enumerate((0.8, 0.55, 0.7)):
-            d.rounded_rectangle((px0 + 40, yy, px0 + 40 + (px1 - px0 - 80) * w, yy + 22), radius=11,
-                                fill=(r.primary if k == 0 else r.muted) + (200 if k == 0 else 90,))
-            yy += 44
-        for k in range(3):
-            d.rounded_rectangle((px0 + 40, yy + 10, px1 - 40, yy + 94), radius=20, fill=(255, 255, 255, 255))
-            d.ellipse((px0 + 56, yy + 26, px0 + 108, yy + 78), fill=(r.primary if k % 2 == 0 else r.accent) + (255,))
-            d.rounded_rectangle((px0 + 124, yy + 34, px1 - 64, yy + 50), radius=8, fill=r.muted + (110,))
-            d.rounded_rectangle((px0 + 124, yy + 60, px1 - 110, yy + 72), radius=6, fill=r.muted + (60,))
-            yy += 110
-        r.commit(ov)
-        right = r.W - 400
+        px0, py0, px1, py1 = r.W - 380, 300, r.W - 70, 960
+        if r.p.app_ui:
+            ui.phone_mock(r, (px0, py0, px1, py1), r.accent, mix_rgb(r.primary, r.white, 0.15),
+                          mix_rgb(r.accent, r.night, 0.25))
+        else:
+            _geometric_phone(r, (px0, py0, px1, py1))
+        right = r.W - 410
     top = r.content_top(r.logo_row(fg))
     cta_top = r.cta(r.white, r.primary)
     els = r.standard_elements(fg, fg, fg, r.white, r.primary,
@@ -625,9 +780,18 @@ def t_aquisicao(r: Renderer) -> dict:
     p = r.p
     upper: list[Element] = []
     if p.tag:
-        upper.append(Element("tag", p.tag, "bold", p.tag_size, r.primary, gap_after=30, pill_bg=r.white))
+        upper.append(Element("tag", p.tag, "bold", p.tag_size, r.primary, gap_after=30, pill_bg=r.white,
+                             icon="pin" if p.app_ui else None))
     upper.append(Element("title", p.title, "extrabold", p.title_size, fg, gap_after=0, line_spacing=1.05))
-    r.stack(upper, _region(r, top, split - 60))
+    right = r.W - r.m
+    if p.app_ui:
+        # pins do mapa sobre o bloco colorido (cidade chegando no mapa)
+        pw = 118
+        tip = split - 70
+        ui.map_pin(r, r.W - r.m - 190, tip, pw, ui.col(r, "app_yellow"), label="J")
+        ui.map_pin(r, r.W - r.m - 62, tip, pw, ui.col(r, "app_pink"), face=True)
+        right = r.W - r.m - 260
+    r.stack(upper, _region(r, top, split - 60, right=right))
     cta_top = r.cta(r.accent, r.white, full_width=True)
     lower: list[Element] = []
     if p.subtitle:
@@ -656,8 +820,9 @@ def t_institucional(r: Renderer) -> dict:
             col = tuple(int(r.primary[i] + (r.accent[i] - r.primary[i]) * t) for i in range(3))
             a0 = 90 + k * (180 / steps)
             d.arc((cx - rad, cy - rad, cx + rad, cy + rad), a0, a0 + 180 / steps + 1, fill=col + (255,), width=46)
-        d.ellipse((r.m, r.H - r.m - 170, r.m + 26, r.H - r.m - 144), fill=r.primary + (255,))
-        d.ellipse((r.m + 40, r.H - r.m - 170, r.m + 66, r.H - r.m - 144), fill=r.accent + (255,))
+        if not r.p.app_ui:
+            d.ellipse((r.m, r.H - r.m - 170, r.m + 26, r.H - r.m - 144), fill=r.primary + (255,))
+            d.ellipse((r.m + 40, r.H - r.m - 170, r.m + 66, r.H - r.m - 144), fill=r.accent + (255,))
         r.commit(ov)
     show_logo_row = r.p.show_location or (r.cfg.brand.get("handle") is not None)
     top = r.m + 40
@@ -666,9 +831,21 @@ def t_institucional(r: Renderer) -> dict:
         r.p.show_logo = False  # a marca aparece grande no centro
         top = r.content_top(r.logo_row(fg))
         r.p.show_logo = saved
-    cta_top = r.cta(r.primary, r.white)
+    nav_top = r.H
+    if r.p.app_ui:
+        # barra de navegação do app como assinatura no rodapé
+        nav_h = 150
+        nav_top = r.H - nav_h
+        bg = ui.mix(r.night, r.white, 0.07)
+        r.rect((0, nav_top, r.W, r.H), bg)
+        r.rect((0, nav_top, r.W, nav_top + 2), ui.mix(r.night, r.white, 0.18))
+        ui.bottom_nav(r, nav_top, nav_h - 20, r.white, inactive=ui.mix(r.night, r.white, 0.6), bg=None, active=0,
+                      x_range=(r.m + 20, r.W - r.m - 20))
+    cta_top = r.cta(r.primary, r.white, bottom=nav_top - 60 if r.p.app_ui else None)
     els: list[Element] = []
-    if r.p.show_logo:
+    if r.p.show_logo and r.logo_image() is not None:
+        els.append(Element("logo", None, "", 230, fg, gap_after=44, min_key="title"))
+    elif r.p.show_logo:
         els.append(Element("wordmark", r.cfg.brand.get("logo_text", "doova"), "extrabold", 170, fg, gap_after=36,
                            line_spacing=1.0, min_key="title"))
     els += r.standard_elements(fg, sub, sub, r.primary, r.white)
@@ -701,8 +878,16 @@ def t_foto_destaque(r: Renderer) -> dict:
     fg = r.text_on_bg()
     sub = r.secondary_on_bg(fg)
     r.photo_credit_label(r.W - r.m, ph - 22)
+    if r.p.app_ui:
+        ui.counter(r, r.W - r.m, 62 + 70, "1/3")
     cta_top = r.cta(r.ink, r.white) if fg == r.ink else r.cta(r.white, r.ink)
-    els = r.standard_elements(fg, sub, sub, r.primary, r.ink)
+    r.actions_beside_cta(fg)
+    if r.p.app_ui:
+        r.tag_icon = "flame"
+        els = r.standard_elements(fg, sub, sub, ui.col(r, "app_black") if fg == r.ink else r.white,
+                                  r.white if fg == r.ink else r.ink)
+    else:
+        els = r.standard_elements(fg, sub, sub, r.primary, r.ink)
     r.stack(els, _region(r, ph + 60, cta_top - 44))
     return {"text": fg}
 
@@ -728,7 +913,14 @@ def t_foto_fundo(r: Renderer) -> dict:
     fg = r.text_on_bg()
     top = r.content_top(r.logo_row(r.white, dot=r.primary))
     cta_top = r.cta(r.white, r.ink)
-    els = r.standard_elements(fg, fg, fg, r.primary, r.ink)
+    r.actions_beside_cta(r.white)
+    if r.p.app_ui:
+        ui.counter(r, r.W - r.m, 62 + 70, "1/3")
+        r.tag_icon = "flame"
+        tag_bg, tag_fg = ui.col(r, "app_black"), r.white
+    else:
+        tag_bg, tag_fg = r.primary, r.ink
+    els = r.standard_elements(fg, fg, fg, tag_bg, tag_fg)
     r.stack(els, _region(r, max(top, text_top + 24), cta_top - 48))
     r.photo_credit_label(r.W - r.m, r.H - 18)
     return {"text": fg}

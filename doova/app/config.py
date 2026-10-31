@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     caption_max_attempts: int = Field(default=4, ge=1, le=20)
 
     # ----------------------------------------------------------------- meta
-    meta_login_type: Literal["instagram", "facebook"] = "instagram"
+    meta_login_type: Literal["instagram", "facebook", "unified"] = "unified"
     meta_graph_api_version: str = "v26.0"
     meta_ig_user_id: str | None = None
     meta_access_token: SecretStr | None = None

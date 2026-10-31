@@ -80,7 +80,8 @@ def test_token_refresh_stored_encrypted(monkeypatch):
     from app.database import SessionLocal
     from app.services.token_store import current_access_token, refresh_token
 
-    s = reload_settings(monkeypatch, META_IG_USER_ID="1", META_ACCESS_TOKEN="IGAAantigo" + "a" * 30,
+    s = reload_settings(monkeypatch, META_LOGIN_TYPE="instagram", META_IG_USER_ID="1",
+                        META_ACCESS_TOKEN="IGAAantigo" + "a" * 30,
                         TOKEN_ENCRYPTION_KEY=Fernet.generate_key().decode())
 
     class M:
@@ -93,3 +94,28 @@ def test_token_refresh_stored_encrypted(monkeypatch):
     assert current_access_token(s).startswith("IGAAnovo")
     with SessionLocal() as db:
         assert "IGAAnovo" not in db.query(StoredToken).one().ciphertext
+
+def test_unified_login_uses_facebook_graph_and_disables_refresh(monkeypatch):
+    from app.config import Settings
+    from app.services.meta_service import MetaError, MetaService
+    from app.services.token_store import refresh_token
+
+    s = reload_settings(monkeypatch, META_LOGIN_TYPE="unified", META_IG_USER_ID="17840000000000000",
+                        META_ACCESS_TOKEN="SUAT-test-token")
+    assert s.meta_host == "https://graph.facebook.com"
+    assert s.meta_configured is True
+
+    class MustNotRefresh:
+        def refresh_long_lived_token(self, token):
+            raise AssertionError("Unified Login não deve tentar renovar SUAT")
+
+    result = refresh_token(s, meta=MustNotRefresh())
+    assert result["refreshed"] is False
+    assert "SUAT" in result["reason"]
+
+    try:
+        MetaService(s).refresh_long_lived_token("SUAT-test-token")
+    except MetaError as exc:
+        assert "SUAT" in str(exc)
+    else:
+        raise AssertionError("a renovação do SUAT deveria ser bloqueada")

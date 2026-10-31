@@ -48,6 +48,7 @@ class TemplateParams(BaseModel):
     shapes: bool = True
     show_logo: bool = True
     show_location: bool = True
+    app_ui: bool = True   # elementos gráficos do app (chips, stories, ícones, pins, navegação...)
     item_style: Literal["cards", "numbered", "checks"] = "checks"
     # foto (somente nos modelos com requires_photo); o crédito é preenchido pelo sistema
     photo_id: str | None = Field(default=None, max_length=40)

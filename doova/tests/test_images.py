@@ -129,3 +129,12 @@ def test_auto_text_color_has_contrast():
         rep = render(cfg.resolve(key), photo=_ph(cfg, key)).report
         assert rep["min_contrast_text_vs_background"] >= 4.5, key
     assert contrast_ratio((255, 255, 255), (0, 0, 0)) == pytest.approx(21, rel=1e-3)
+
+@pytest.mark.parametrize("key", get_template_config().keys())
+def test_app_ui_toggle(tmp_path, key):
+    """Os elementos gráficos do app podem ser desligados e mudam a arte quando ligados."""
+    cfg = get_template_config()
+    on = generate(cfg.resolve(key, _ov(cfg, key)), tmp_path / "on", photo=_ph(cfg, key))
+    off = generate(cfg.resolve(key, dict(_ov(cfg, key), app_ui=False)), tmp_path / "off", photo=_ph(cfg, key))
+    assert off.report["warnings"] == [] and off.report["min_contrast_text_vs_background"] >= 4.5
+    assert on.sha256 != off.sha256

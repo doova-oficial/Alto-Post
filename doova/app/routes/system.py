@@ -56,6 +56,7 @@ def config():
         "groq_model": s.groq_model, "groq_configured": s.groq_configured, "caption_allow_emojis": s.caption_allow_emojis,
         "caption_max_hashtags": s.caption_max_hashtags, "meta_login_type": s.meta_login_type,
         "meta_graph_api_version": s.meta_graph_api_version, "meta_configured": s.meta_configured,
+        "meta_token_type": "system_user_access_token" if s.meta_login_type == "unified" else "long_lived_user_token",
         "public_base_url": s.public_base_url, "scheduler_enabled": s.scheduler_enabled,
         "analysis_target_age_hours": s.analysis_target_age_hours,
         "analysis_min_samples_per_group": s.analysis_min_samples_per_group,
@@ -105,13 +106,16 @@ def meta_check():
         raise HTTPException(502, str(e))
 
 
-@router.post("/integrations/meta/refresh-token", summary="Renovar o token de longa duração da Meta")
+@router.post("/integrations/meta/refresh-token", summary="Renovar token da Meta quando o fluxo permitir")
 def meta_refresh():
     from app.services.meta_service import MetaError
     from app.services.token_store import refresh_token
 
+    s = get_settings()
+    if s.meta_login_type == "unified":
+        raise HTTPException(409, "Unified Login usa SUAT; substitua o token no painel da Meta em vez de tentar renová-lo por este endpoint.")
     try:
-        return refresh_token()
+        return refresh_token(s)
     except MetaError as e:
         raise HTTPException(502, str(e))
 

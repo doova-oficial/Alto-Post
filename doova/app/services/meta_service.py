@@ -217,6 +217,12 @@ class MetaService:
     def refresh_long_lived_token(self, token: str) -> tuple[str, int | None]:
         """Renova o token de longa duração (Instagram Login: ig_refresh_token; Facebook Login: fb_exchange_token)."""
         s = self.settings
+        if s.meta_login_type == "unified":
+            raise MetaError(
+                "Unified Login usa token de usuário do sistema (SUAT); "
+                "este tipo de token não deve passar pela renovação de tokens long-lived. "
+                "Gere/substitua o token no painel da Meta quando necessário."
+            )
         if s.meta_login_type == "instagram":
             resp = self._http().get("https://graph.instagram.com/refresh_access_token",
                                     params={"grant_type": "ig_refresh_token", "access_token": token})
