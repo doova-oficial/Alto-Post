@@ -28,7 +28,7 @@ from app.services.caption_validator import CaptionCheck, validate_caption
 from app.services.doova_context import context_as_text
 
 logger = logging.getLogger(__name__)
-PROMPT_VERSION = "v3"
+PROMPT_VERSION = "v4"
 
 STRUCTURES = [
     "comece com uma frase direta sobre o problema que o público enfrenta",
@@ -76,10 +76,18 @@ def build_system_prompt(settings: Settings) -> str:
         if not settings.caption_allow_emojis
         else "- Emojis são permitidos com moderação: no máximo um, e somente se acrescentar sentido."
     )
-    hashtag_rule = (
-        f"- Utilize no máximo {settings.caption_max_hashtags} hashtags relevantes, somente quando fizer sentido, no final."
-        if settings.caption_max_hashtags > 0 else "- Não utilize hashtags."
-    )
+    if settings.caption_max_hashtags > 0:
+        hashtag_rule = (
+            f"- Use no máximo {settings.caption_max_hashtags} hashtags, no final da legenda, em uma linha separada.\n"
+            "- A primeira hashtag deve ser sempre #doova.\n"
+            "- As outras devem ser palavras ou expressões reais e comuns em português, em minúsculas, sem acentos "
+            "e sem espaços, ligadas diretamente ao assunto (exemplos: #servicos, #telhado, #festa, #ipora, #goias).\n"
+            "- Nunca junte palavras para criar termos que as pessoas não usam (exemplo do que NÃO fazer: "
+            "#consertodetalhado). Nunca use hashtags que não tenham relação com o texto.\n"
+            "- Se não houver uma hashtag natural e conhecida para o assunto, use só #doova."
+        )
+    else:
+        hashtag_rule = "- Não utilize hashtags."
     return f"""Você escreve legendas para o Instagram do Doova.
 
 {context_as_text()}
