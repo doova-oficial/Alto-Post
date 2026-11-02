@@ -303,6 +303,12 @@ def _tts_elevenlabs(text: str, settings: Settings, out_path: Path, timeout: floa
             },
             timeout=timeout,
         )
+        if response.status_code == 402:
+            raise VideoSearchError(
+                "ElevenLabs recusou ELEVENLABS_VOICE_ID (HTTP 402): contas gratuitas "
+                "nao podem usar vozes da Voice Library via API. Configure uma voz "
+                "propria disponivel em My Voices ou use um plano pago."
+            )
         if response.status_code != 200:
             detail = response.text[-300:].replace("\n", " ")
             raise VideoSearchError(f"ElevenLabs HTTP {response.status_code}: {detail}")
@@ -483,7 +489,7 @@ def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out:
     # margem maior que antes (+30s não bastava em CPU compartilhada/limitada)
     result = subprocess.run(cmd, capture_output=True, timeout=settings.video_timeout_seconds + 60)
     if result.returncode != 0 or not out.exists():
-        raise VideoSearchError(f"ffmpeg falhou: {result.stderr.decode(errors='replace')[-400:]}")
+        raise VideoSearchError(f"ffmpeg falhou: {result.stderr.decode(errors='replace')[-2000:]}")
 
 
 def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], settings: Settings,
@@ -510,7 +516,9 @@ def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], setti
         subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName={font_name},FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=0,Alignment=2,MarginV=180'"
     base_scale = (f"scale={settings.video_width}:{settings.video_height}:"
                   f"force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height},"
-                  "fps=30,format=yuv420p")
+                  # xfade exige timebase idêntico em todos os vídeos; o fps pode
+                  # reintroduzir timebases diferentes sem esta normalização.
+                  "fps=30,format=yuv420p,settb=AVTB,setsar=1")
     segment_duration = duration_seconds / len(sources)
     filters: list[str] = []
     labels: list[str] = []
@@ -548,7 +556,7 @@ def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], setti
                 "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)])
     result = subprocess.run(cmd, capture_output=True, timeout=settings.video_timeout_seconds + 60)
     if result.returncode != 0 or not out.exists():
-        raise VideoSearchError(f"ffmpeg falhou: {result.stderr.decode(errors='replace')[-400:]}")
+        raise VideoSearchError(f"ffmpeg falhou: {result.stderr.decode(errors='replace')[-2000:]}")
 
 
 def _upload_to_cloudinary(source: bytes | Path, asset_key: str, settings: Settings) -> str:

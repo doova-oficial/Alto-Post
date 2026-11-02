@@ -197,6 +197,25 @@ def test_tts_prefers_elevenlabs_when_configured(monkeypatch, tmp_path):
     assert calls["json"]["text"] == "[tom acolhedor] Oi"
 
 
+def test_elevenlabs_402_explains_library_voice_restriction(monkeypatch, tmp_path):
+    from app.config import get_settings, reset_settings_cache
+    from app.services import video_service
+
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "eleven-test-key")
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "library-voice")
+    reset_settings_cache()
+
+    class FakeResponse:
+        status_code = 402
+        content = b""
+        text = '{"detail":{"code":"paid_plan_required"}}'
+
+    monkeypatch.setattr(video_service.httpx, "post", lambda *args, **kwargs: FakeResponse())
+
+    with pytest.raises(video_service.VideoSearchError, match="Voice Library"):
+        video_service._tts_narration("Oi", get_settings(), tmp_path / "neural.mp3", 5)
+
+
 def test_emotion_cues_are_only_added_for_elevenlabs(monkeypatch):
     from app.config import get_settings, reset_settings_cache
     from app.services.video_service import _elevenlabs_narration_prompt
@@ -272,6 +291,7 @@ def test_render_video_sources_builds_cuts_between_placeholders(monkeypatch, tmp_
     filter_graph = command[command.index("-filter_complex") + 1]
     assert "xfade=transition=fade" in filter_graph
     assert "duration=0.350" in filter_graph
+    assert "fps=30,format=yuv420p,settb=AVTB,setsar=1" in filter_graph
     assert any(str(item).endswith("source-0.mp4") for item in command)
     assert any(str(item).endswith("source-1.mp4") for item in command)
     assert output.read_bytes() == b"fake output"

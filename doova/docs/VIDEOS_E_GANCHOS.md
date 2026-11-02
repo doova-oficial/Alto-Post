@@ -13,6 +13,9 @@ placeholders com cortes secos, corta a duração configurada e queima o texto em
 O MP4 é enviado ao Cloudinary; o PostgreSQL guarda somente a URL,
 metadados e o roteiro. Vídeos antigos que ainda tenham `mp4_bytes` continuam sendo servidos.
 
+No ElevenLabs, `ELEVENLABS_VOICE_ID` deve apontar para uma voz própria disponível em `My Voices`.
+Vozes da Voice Library não ficam disponíveis pela API para contas gratuitas.
+
 ## Endpoints
 
 - `POST /api/videos/trend` com `{"trend_term":"chuva em Goiânia", "render":true}` busca o vídeo, cria o gancho e renderiza o MP4.
