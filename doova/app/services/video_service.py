@@ -71,6 +71,33 @@ def _client(settings: Settings, client: httpx.Client | None) -> tuple[httpx.Clie
 # teto de largura do candidato: baixar 4K só pra reescalar pra 1080x1920 estoura RAM
 # em planos pequenos (512MB) à toa — o maior lado do vídeo final já cobre o necessário.
 VIDEO_CANDIDATE_MAX_WIDTH = 1280
+VIDEO_QUERY_ALIASES: dict[str, tuple[str, ...]] = {
+    "chuva": ("rain", "rain drops", "roof repair"),
+    "calor": ("hot weather", "air conditioner repair"),
+    "festas": ("party food", "party decoration"),
+    "estudos": ("student studying", "tutor"),
+    "energia": ("electrician working", "electrical repair"),
+    "agua": ("plumber", "water leak"),
+    "pets": ("dog grooming", "pet care"),
+    "limpeza": ("house cleaning", "cleaning service"),
+    "jardim": ("gardener", "lawn mowing"),
+    "veiculos": ("car mechanic", "auto repair"),
+    "reforma": ("house renovation", "house painter"),
+}
+
+
+def _video_query_variants(query: str) -> list[str]:
+    """Gera consultas de stock progressivamente mais amplas, sem trocar o provedor."""
+    q = " ".join((query or "").split())[:100]
+    variants = [q]
+    words = q.casefold().split()
+    for key, aliases in VIDEO_QUERY_ALIASES.items():
+        if any(word == key or word.startswith(key) for word in words):
+            if len(words) > 1:
+                variants.append(key)
+            variants.extend(aliases)
+            break
+    return list(dict.fromkeys(item for item in variants if len(item) >= 2))
 
 
 def _candidate(raw: dict[str, Any], query: str, provider: str = "pixabay") -> VideoCandidate | None:
@@ -169,12 +196,17 @@ def search_videos(query: str, settings: Settings | None = None,
         providers = [s.video_provider]
         if s.video_provider == "pexels" and s.video_pixabay_fallback_enabled:
             providers.append("pixabay")
-        for provider in providers:
-            candidates = (_search_pexels(q, s, c) if provider == "pexels"
-                          else _search_pixabay(q, s, c))
-            if candidates:
-                return candidates
-        raise VideoSearchError(f"nenhum vídeo encontrado para '{q}' nos provedores configurados")
+        attempted_queries = _video_query_variants(q)
+        for search_query in attempted_queries:
+            for provider in providers:
+                candidates = (_search_pexels(search_query, s, c) if provider == "pexels"
+                              else _search_pixabay(search_query, s, c))
+                if candidates:
+                    return candidates
+        raise VideoSearchError(
+            f"nenhum vídeo encontrado para '{q}' nos provedores configurados "
+            f"(consultas tentadas: {', '.join(attempted_queries)})"
+        )
     finally:
         if own:
             c.close()

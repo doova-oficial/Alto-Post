@@ -101,6 +101,29 @@ def test_search_videos_can_require_pexels(monkeypatch):
             search_videos("chuva", get_settings(), client=client)
 
 
+def test_search_videos_expands_portuguese_query_when_pexels_is_empty(monkeypatch):
+    from app.config import get_settings, reset_settings_cache
+    from app.services.video_service import search_videos
+
+    monkeypatch.setenv("PEXELS_API_KEY", "pexels-test-key")
+    monkeypatch.setenv("VIDEO_PIXABAY_FALLBACK_ENABLED", "false")
+    reset_settings_cache()
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.params["query"])
+        if request.url.params["query"] == "rain":
+            return httpx.Response(200, json={"videos": [_pexels_video()]})
+        return httpx.Response(200, json={"videos": []})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        candidates = search_videos("chuva forte", get_settings(), client=client)
+
+    assert calls[:2] == ["chuva forte", "chuva"]
+    assert "rain" in calls
+    assert candidates[0].provider == "pexels"
+
+
 def test_tts_generates_mp3_with_gtts(monkeypatch, tmp_path):
     from app.config import reset_settings_cache
     from app.services import video_service
