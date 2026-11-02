@@ -141,12 +141,13 @@ class Settings(BaseSettings):
     # Cores ASS em formato &HAABBGGRR: amarelo ativo sobre branco inativo.
     video_karaoke_active_color: str = "&H0000FFFF"
     video_karaoke_inactive_color: str = "&H00FFFFFF"
+    video_segment_count: int = Field(default=3, ge=1, le=6)
     # 80MB era alto demais pra instâncias com 512MB de RAM (o ffmpeg decodificando
     # o vídeo soma várias vezes esse tamanho em memória); 25MB cobre os vídeos
     # curtos (até ~30s) que o VIDEO_CANDIDATE_MAX_WIDTH already limita.
     video_max_download_bytes: int = Field(default=25 * 1024 * 1024, ge=1_000_000)
-    # "auto" usa ElevenLabs quando configurado e gTTS como fallback gratuito.
-    video_tts_provider: Literal["auto", "gtts", "elevenlabs"] = "auto"
+    # ElevenLabs e obrigatorio para os reels; gTTS so e usado se escolhido explicitamente.
+    video_tts_provider: Literal["auto", "gtts", "elevenlabs"] = "elevenlabs"
     video_tts_enabled: bool = True
     video_tts_lang: str = "pt"
     video_tts_tld: str = "com.br"

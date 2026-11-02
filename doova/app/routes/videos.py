@@ -24,6 +24,7 @@ class VideoTrendRequest(BaseModel):
     trend_term: str = Field(min_length=2, max_length=200)
     theme_key: str | None = Field(default=None, max_length=80)
     render: bool = True
+    force: bool = False
 
 
 class VideoCheckRequest(BaseModel):
@@ -83,7 +84,7 @@ def video_from_trend(req: VideoTrendRequest, db: Session = Depends(get_db)):
     settings = get_settings()
     try:
         asset = create_video(db, theme, req.trend_term, req.trend_term, settings,
-                             client=http_client(), render=req.render)
+                             client=http_client(), render=req.render, force=req.force)
     except VideoSearchError as e:
         raise HTTPException(502, str(e))
     return public(asset)

@@ -301,7 +301,8 @@ def _script_texts(theme: str, trend_term: str) -> tuple[str, list[str]]:
     """Gancho e as falas do roteiro, sem depender da duração (usado tanto pra TTS quanto legenda)."""
     hooks = HOOKS.get(theme, ["Isso pode facilitar sua rotina.", "Você também está passando por isso?", "Encontre ajuda perto de você."])
     hook = hooks[sum(ord(c) for c in trend_term) % len(hooks)]
-    texts = [hook, "Tem alguém que sabe resolver.", "Encontre serviços no Doova.", "Peça ajuda. Ofereça seu trabalho."]
+    texts = [hook, "Tem alguém que sabe resolver.", "Encontre serviços no Doova.",
+             "Instale o app Doova e encontre ajuda ou ofereça seu serviço."]
     return hook, texts
 
 
@@ -377,7 +378,7 @@ def _ass(rows: list[dict[str, Any]], settings: Settings, font_name: str) -> str:
     style = (
         f"Style: Default,{font_name},{settings.video_font_size},"
         f"{settings.video_karaoke_active_color},{settings.video_karaoke_inactive_color},"
-        "&H00000000,&H00000000,1,0,0,0,100,100,0,0,3,3,1,2,20,20,180,1"
+        "&H00FFFFFF,&H00000000,1,0,0,0,100,100,0,0,1,0,0,2,20,20,180,1"
     )
     events = [
         f"Dialogue: 0,{_ass_stamp(row['start'])},{_ass_stamp(row['end'])},Default,,0,0,0,,"
@@ -416,7 +417,7 @@ def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out:
         subtitle_filter = f"subtitles={subtitle_path}"
     else:
         subtitle_path = subs.as_posix().replace(":", "\\:")
-        subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName={font_name},FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=180'"
+        subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName={font_name},FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00FFFFFF,BorderStyle=1,Outline=0,Shadow=0,Alignment=2,MarginV=180'"
     encode_opts = [
         "-c:v", "libx264",
         # ultrafast + sem b-frames: encoder mais simples, bem menos buffer de lookahead
@@ -447,6 +448,58 @@ def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out:
         cmd = [ffmpeg, "-y", "-i", str(src), "-t", str(duration_seconds), "-vf", scale_filter,
                "-an", *encode_opts, str(out)]
     # margem maior que antes (+30s não bastava em CPU compartilhada/limitada)
+    result = subprocess.run(cmd, capture_output=True, timeout=settings.video_timeout_seconds + 60)
+    if result.returncode != 0 or not out.exists():
+        raise VideoSearchError(f"ffmpeg falhou: {result.stderr.decode(errors='replace')[-400:]}")
+
+
+def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], settings: Settings,
+                          out: Path, duration_seconds: float, audio: Path | None = None) -> None:
+    """Renderiza varios placeholders em sequência, com cortes secos entre eles."""
+    if len(sources) <= 1:
+        render_video(sources[0], rows, settings, out, duration_seconds, audio=audio)
+        return
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise VideoSearchError("ffmpeg nao instalado; use a imagem Docker do projeto ou instale ffmpeg")
+    work_dir = sources[0].parent
+    subs = work_dir / "captions.srt"
+    subs.write_text(_srt(rows), encoding="utf-8")
+    font = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "Inter-Bold.otf"
+    font_name = font.stem if font.exists() else "Arial"
+    if settings.video_karaoke_enabled:
+        ass = work_dir / "captions.ass"
+        ass.write_text(_ass(rows, settings, font_name), encoding="utf-8")
+        subtitle_path = ass.as_posix().replace(":", "\\:")
+        subtitle_filter = f"subtitles={subtitle_path}"
+    else:
+        subtitle_path = subs.as_posix().replace(":", "\\:")
+        subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName={font_name},FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00FFFFFF,BorderStyle=1,Outline=0,Shadow=0,Alignment=2,MarginV=180'"
+    base_scale = (f"scale={settings.video_width}:{settings.video_height}:"
+                  f"force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height}")
+    segment_duration = duration_seconds / len(sources)
+    filters: list[str] = []
+    labels: list[str] = []
+    for index in range(len(sources)):
+        label = f"v{index}"
+        labels.append(f"[{label}]")
+        filters.append(f"[{index}:v:0]{base_scale},trim=duration={segment_duration:.3f},"
+                       f"setpts=PTS-STARTPTS[{label}]")
+    filters.append(f"{''.join(labels)}concat=n={len(sources)}:v=1:a=0[merged]")
+    filters.append(f"[merged]{subtitle_filter}[vout]")
+    cmd = [ffmpeg, "-y"]
+    for source in sources:
+        cmd.extend(["-stream_loop", "-1", "-i", str(source)])
+    if audio is not None:
+        cmd.extend(["-i", str(audio)])
+    cmd.extend(["-t", str(duration_seconds), "-filter_complex", ";".join(filters),
+                "-map", "[vout]"])
+    if audio is not None:
+        cmd.extend(["-map", f"{len(sources)}:a:0", "-c:a", "aac", "-b:a", "128k"])
+    else:
+        cmd.append("-an")
+    cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-bf", "0", "-threads", "2",
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)])
     result = subprocess.run(cmd, capture_output=True, timeout=settings.video_timeout_seconds + 60)
     if result.returncode != 0 or not out.exists():
         raise VideoSearchError(f"ffmpeg falhou: {result.stderr.decode(errors='replace')[-400:]}")
@@ -486,16 +539,20 @@ def _upload_to_cloudinary(source: bytes | Path, asset_key: str, settings: Settin
 
 
 def create_video(db: Session, theme: str, trend_term: str, query: str, settings: Settings | None = None,
-                 client: httpx.Client | None = None, render: bool = True) -> VideoAsset:
+                 client: httpx.Client | None = None, render: bool = True, force: bool = False) -> VideoAsset:
     s = settings or get_settings()
-    candidate = next(iter(search_videos(query, s, client)), None)
-    if candidate is None:
+    candidates = search_videos(query, s, client)
+    if not candidates:
         raise VideoSearchError(f"nenhum vídeo adequado encontrado para '{query}'")
+    selected = candidates[:s.video_segment_count]
+    candidate = selected[0]
     existing = db.scalar(select(VideoAsset).where(VideoAsset.provider == candidate.provider,
                                                    VideoAsset.provider_id == candidate.provider_id))
-    if existing and (existing.video_url or not render):
+    # O fluxo automático continua idempotente; o teste manual pode re-renderizar
+    # o mesmo vídeo de stock explicitamente com force=True.
+    if existing and not force and (existing.video_url or not render):
         return existing
-    if existing and existing.mp4_bytes:
+    if existing and not force and existing.mp4_bytes:
         existing.video_url = _upload_to_cloudinary(
             existing.mp4_bytes, f"{theme}-{candidate.provider_id}-legacy-{uuid4().hex}", s
         )
@@ -510,9 +567,23 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
     # o vídeo não passa pela memória do Python em nenhuma etapa deste bloco.
     with tempfile.TemporaryDirectory(prefix="doova-video-") as folder:
         root = Path(folder)
-        src = root / "source.mp4"
-        _download(candidate, s, client, src)
-        digest = _sha256_file(src)
+        sources: list[Path] = []
+        digests: list[str] = []
+        for index, source_candidate in enumerate(selected):
+            source = root / f"source-{index}.mp4"
+            try:
+                _download(source_candidate, s, client, source)
+            except VideoSearchError:
+                if not sources:
+                    raise
+                logger.warning("ignorando placeholder %s/%s; os demais serao usados", source_candidate.provider,
+                               source_candidate.provider_id)
+                continue
+            sources.append(source)
+            digests.append(_sha256_file(source))
+        if not sources:
+            raise VideoSearchError("nenhum vídeo placeholder foi baixado")
+        digest = hashlib.sha256("".join(digests).encode()).hexdigest()
         if render:
             out = root / "output.mp4"
             audio_path: Path | None = None
@@ -528,13 +599,15 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
                                    elevenlabs_text=elevenlabs_narration)
                     duration_seconds = _probe_duration(audio_path, s.video_timeout_seconds)
                 except VideoSearchError as e:
+                    if s.video_tts_provider == "elevenlabs":
+                        raise
                     # TTS é bônus, não motivo pra derrubar o vídeo inteiro — segue mudo com a
                     # duração configurada, igual ao comportamento antes do TTS existir.
                     logger.warning("TTS falhou para %s/%s, seguindo sem áudio: %s", theme, trend_term, e)
                     audio_path = None
                     duration_seconds = float(s.video_duration_seconds)
             _, rows = subtitle_plan(theme, trend_term, duration_seconds)
-            render_video(src, rows, s, out, duration_seconds, audio=audio_path)
+            _render_video_sources(sources, rows, s, out, duration_seconds, audio=audio_path)
             video_url = _upload_to_cloudinary(out, f"{theme}-{candidate.provider_id}-{uuid4().hex}", s)
     if existing:
         existing.query = query[:200]

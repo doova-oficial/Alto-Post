@@ -6,14 +6,17 @@ e não envia a manchete original para o banco de mídia.
 
 ## Configuração
 
-Configure `PIXABAY_API_KEY` e as três variáveis do Cloudinary: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` e
-`CLOUDINARY_API_SECRET`. O Dockerfile instala o `ffmpeg`, que converte o vídeo para 9:16, corta a duração configurada
-e queima o texto em quatro blocos de legenda. O MP4 é enviado ao Cloudinary; o PostgreSQL guarda somente a URL,
+Configure `PEXELS_API_KEY` (Pixabay é fallback), as credenciais do ElevenLabs (`ELEVENLABS_API_KEY` e
+`ELEVENLABS_VOICE_ID`) e as três variáveis do Cloudinary: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` e
+`CLOUDINARY_API_SECRET`. O Dockerfile instala o `ffmpeg`, que converte o vídeo para 9:16, intercala até três
+placeholders com cortes secos, corta a duração configurada e queima o texto em quatro blocos de legenda sem borda preta.
+O MP4 é enviado ao Cloudinary; o PostgreSQL guarda somente a URL,
 metadados e o roteiro. Vídeos antigos que ainda tenham `mp4_bytes` continuam sendo servidos.
 
 ## Endpoints
 
 - `POST /api/videos/trend` com `{"trend_term":"chuva em Goiânia", "render":true}` busca o vídeo, cria o gancho e renderiza o MP4.
+- Se o mesmo vídeo de stock já tiver sido usado, envie `"force":true` para re-renderizar o teste; sem isso o fluxo continua idempotente e devolve o vídeo existente.
 - `GET /api/videos/{id}` retorna o roteiro SRT, o gancho e a origem.
 - `GET /api/videos/{id}/file` serve o MP4 pronto.
 

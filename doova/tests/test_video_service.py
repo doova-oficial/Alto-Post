@@ -82,6 +82,7 @@ def test_search_videos_falls_back_to_pixabay_when_pexels_is_empty(monkeypatch):
 
 
 def test_tts_generates_mp3_with_gtts(monkeypatch, tmp_path):
+    from app.config import reset_settings_cache
     from app.services import video_service
 
     calls: dict[str, object] = {}
@@ -95,6 +96,8 @@ def test_tts_generates_mp3_with_gtts(monkeypatch, tmp_path):
                 audio.write(b"ID3 fake mp3")
 
     monkeypatch.setitem(sys.modules, "gtts", types.SimpleNamespace(gTTS=FakeGTTS))
+    monkeypatch.setenv("VIDEO_TTS_PROVIDER", "gtts")
+    reset_settings_cache()
     output = tmp_path / "narration.mp3"
 
     from app.config import get_settings
@@ -169,3 +172,55 @@ def test_ass_karaoke_marks_each_word_with_timing():
     assert "Style: Default,Inter,43,&H0000FFFF,&H00FFFFFF" in result
     assert "{\\k" in result
     assert "Chuva" in result and "chegou" in result
+
+
+def test_script_ends_with_doova_install_cta():
+    from app.services.video_service import _script_texts
+
+    _, texts = _script_texts("chuva", "chuva")
+
+    assert texts[-1] == "Instale o app Doova e encontre ajuda ou ofereça seu serviço."
+
+
+def test_render_video_sources_builds_cuts_between_placeholders(monkeypatch, tmp_path):
+    from app.config import get_settings
+    from app.services import video_service
+
+    sources = [tmp_path / "source-0.mp4", tmp_path / "source-1.mp4"]
+    for source in sources:
+        source.write_bytes(b"fake")
+    calls: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        Path(cmd[-1]).write_bytes(b"fake output")
+        return types.SimpleNamespace(returncode=0, stderr=b"")
+
+    from pathlib import Path
+
+    monkeypatch.setattr(video_service.shutil, "which", lambda _: "ffmpeg")
+    monkeypatch.setattr(video_service.subprocess, "run", fake_run)
+    output = tmp_path / "output.mp4"
+
+    video_service._render_video_sources(
+        sources,
+        [{"start": 0, "end": 4, "text": "Chuva chegou"}],
+        get_settings(),
+        output,
+        4,
+    )
+
+    command = calls["cmd"]
+    filter_graph = command[command.index("-filter_complex") + 1]
+    assert "concat=n=2:v=1:a=0" in filter_graph
+    assert any(str(item).endswith("source-0.mp4") for item in command)
+    assert any(str(item).endswith("source-1.mp4") for item in command)
+    assert output.read_bytes() == b"fake output"
+
+
+def test_video_request_supports_forcing_a_previous_stock_video():
+    from app.routes.videos import VideoTrendRequest
+
+    request = VideoTrendRequest(trend_term="chuva", theme_key="chuva", force=True)
+
+    assert request.force is True

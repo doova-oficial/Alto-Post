@@ -71,6 +71,12 @@ services:
         value: "true"
       - key: PIXABAY_API_KEY
         sync: false
+      - key: VIDEO_PROVIDER
+        value: pexels
+      - key: VIDEO_SEGMENT_COUNT
+        value: "3"
+      - key: VIDEO_TTS_PROVIDER
+        value: elevenlabs
       - key: PEXELS_API_KEY
         sync: false
       - key: ELEVENLABS_API_KEY
