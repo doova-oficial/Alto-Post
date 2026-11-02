@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import io
 import json
+import logging
 import shutil
 import subprocess
 import tempfile
@@ -22,6 +23,7 @@ from app.database import utcnow
 from app.models import VideoAsset
 
 PIXABAY_VIDEO_URL = "https://pixabay.com/api/videos/"
+logger = logging.getLogger("app")
 
 
 class VideoSearchError(RuntimeError):
@@ -161,12 +163,12 @@ def _probe_duration(path: Path, timeout: float) -> float:
         raise VideoSearchError(f"ffprobe devolveu formato inesperado: {e}") from e
 
 
-def _tts_narration(text: str, voice: str, out_path: Path, timeout: float) -> None:
+def _tts_narration(text: str, voice: str, rate: str, out_path: Path, timeout: float) -> None:
     """Gera a narração em mp3 com edge-tts (gratuito, sem chave de API)."""
     import edge_tts
 
     async def _run() -> None:
-        communicate = edge_tts.Communicate(text, voice)
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
         await communicate.save(str(out_path))
 
     try:
@@ -321,11 +323,12 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
                 audio_path = root / "narration.mp3"
                 try:
                     narration = ". ".join(script_texts)
-                    _tts_narration(narration, s.video_tts_voice, audio_path, s.video_timeout_seconds)
+                    _tts_narration(narration, s.video_tts_voice, s.video_tts_rate, audio_path, s.video_timeout_seconds)
                     duration_seconds = _probe_duration(audio_path, s.video_timeout_seconds)
-                except VideoSearchError:
+                except VideoSearchError as e:
                     # TTS é bônus, não motivo pra derrubar o vídeo inteiro — segue mudo com a
                     # duração configurada, igual ao comportamento antes do TTS existir.
+                    logger.warning("TTS falhou para %s/%s, seguindo sem áudio: %s", theme, trend_term, e)
                     audio_path = None
                     duration_seconds = float(s.video_duration_seconds)
             _, rows = subtitle_plan(theme, trend_term, duration_seconds)
