@@ -142,6 +142,9 @@ class Settings(BaseSettings):
     # narração por voz com edge-tts (gratuito, sem chave de API)
     video_tts_enabled: bool = True
     video_tts_voice: str = "pt-BR-FranciscaNeural"  # outras opções: pt-BR-AntonioNeural
+    # ritmo padrão do edge-tts soa devagar pra reels; +25% dá um passo mais adequado
+    # ao formato curto sem distorcer demais a voz. Aceita valores tipo "+0%", "+40%", "-10%".
+    video_tts_rate: str = "+25%"
 
     # ------------------------------------------- assuntos do momento (automÃ¡tico)
     trend_auto_enabled: bool = True
