@@ -11,3 +11,4 @@ apscheduler>=3.10,<4
 pyyaml>=6.0
 cryptography>=42
 cloudinary>=1.41,<2
+edge-tts>=6.1,<7

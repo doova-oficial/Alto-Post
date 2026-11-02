@@ -1,8 +1,10 @@
-"""Busca vídeos gratuitos e cria reels verticais com gancho e legendas queimadas."""
+"""Busca vídeos gratuitos e cria reels verticais com gancho, narração e legendas queimadas."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
+import json
 import shutil
 import subprocess
 import tempfile
@@ -145,10 +147,48 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def subtitle_plan(theme: str, trend_term: str, duration: int) -> tuple[str, list[dict[str, Any]]]:
+def _probe_duration(path: Path, timeout: float) -> float:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise VideoSearchError("ffprobe não instalado (vem junto do pacote ffmpeg)")
+    cmd = [ffprobe, "-v", "quiet", "-print_format", "json", "-show_format", str(path)]
+    result = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    if result.returncode != 0:
+        raise VideoSearchError(f"ffprobe falhou: {result.stderr.decode(errors='replace')[-300:]}")
+    try:
+        return float(json.loads(result.stdout).get("format", {}).get("duration") or 0)
+    except (ValueError, json.JSONDecodeError) as e:
+        raise VideoSearchError(f"ffprobe devolveu formato inesperado: {e}") from e
+
+
+def _tts_narration(text: str, voice: str, out_path: Path, timeout: float) -> None:
+    """Gera a narração em mp3 com edge-tts (gratuito, sem chave de API)."""
+    import edge_tts
+
+    async def _run() -> None:
+        communicate = edge_tts.Communicate(text, voice)
+        await communicate.save(str(out_path))
+
+    try:
+        asyncio.run(asyncio.wait_for(_run(), timeout=timeout))
+    except asyncio.TimeoutError as e:
+        raise VideoSearchError("edge-tts demorou demais para gerar a narração") from e
+    except Exception as e:
+        raise VideoSearchError(f"edge-tts falhou: {type(e).__name__}: {e}") from e
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        raise VideoSearchError("edge-tts não gerou um arquivo de áudio válido")
+
+
+def _script_texts(theme: str, trend_term: str) -> tuple[str, list[str]]:
+    """Gancho e as falas do roteiro, sem depender da duração (usado tanto pra TTS quanto legenda)."""
     hooks = HOOKS.get(theme, ["Isso pode facilitar sua rotina.", "Você também está passando por isso?", "Encontre ajuda perto de você."])
     hook = hooks[sum(ord(c) for c in trend_term) % len(hooks)]
     texts = [hook, "Tem alguém que sabe resolver.", "Encontre serviços no Doova.", "Peça ajuda. Ofereça seu trabalho."]
+    return hook, texts
+
+
+def subtitle_plan(theme: str, trend_term: str, duration: float) -> tuple[str, list[dict[str, Any]]]:
+    hook, texts = _script_texts(theme, trend_term)
     span = max(duration / len(texts), 1)
     rows = [{"start": round(i * span, 2), "end": round((i + 1) * span, 2), "text": t} for i, t in enumerate(texts)]
     return hook, rows
@@ -161,9 +201,10 @@ def _srt(rows: list[dict[str, Any]]) -> str:
     return "\n\n".join(f"{i}\n{stamp(x['start'])} --> {stamp(x['end'])}\n{x['text']}" for i, x in enumerate(rows, 1)) + "\n"
 
 
-def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out: Path) -> None:
-    """Lê src e escreve em out, sem passar o vídeo pela memória do Python em nenhum momento
-    (o ffmpeg processa stream a stream por fora do processo)."""
+def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out: Path,
+                 duration_seconds: float, audio: Path | None = None) -> None:
+    """Lê src (e, se houver, audio) e escreve em out, sem passar o vídeo pela memória do
+    Python em nenhum momento (o ffmpeg processa stream a stream por fora do processo)."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise VideoSearchError("ffmpeg não instalado; use a imagem Docker do projeto ou instale ffmpeg")
@@ -174,16 +215,35 @@ def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out:
     subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName=Inter,FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=180'"
     if font.exists():
         subtitle_filter = subtitle_filter.replace("FontName=Inter", f"FontName={font.stem}")
-    cmd = [ffmpeg, "-y", "-i", str(src), "-t", str(settings.video_duration_seconds), "-vf",
-           f"scale={settings.video_width}:{settings.video_height}:force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height},{subtitle_filter}",
-           "-an", "-c:v", "libx264",
-           # ultrafast + sem b-frames: encoder mais simples, bem menos buffer de lookahead
-           # (o preset padrão "medium" pode usar várias vezes mais RAM pra isso num clipe 1080x1920)
-           "-preset", "ultrafast", "-bf", "0",
-           # trava threads do libx264 pra não disparar várias fatias simultâneas num host com
-           # pouca RAM/CPU compartilhada — 2 é um bom equilíbrio pra instâncias pequenas
-           "-threads", "2",
-           "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)]
+    encode_opts = [
+        "-c:v", "libx264",
+        # ultrafast + sem b-frames: encoder mais simples, bem menos buffer de lookahead
+        # (o preset padrão "medium" pode usar várias vezes mais RAM pra isso num clipe 1080x1920)
+        "-preset", "ultrafast", "-bf", "0",
+        # trava threads do libx264 pra não disparar várias fatias simultâneas num host com
+        # pouca RAM/CPU compartilhada — 2 é um bom equilíbrio pra instâncias pequenas
+        "-threads", "2",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+    ]
+    scale_filter = (f"scale={settings.video_width}:{settings.video_height}:"
+                    f"force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height},"
+                    f"{subtitle_filter}")
+    if audio is not None:
+        # -stream_loop -1 no vídeo: se a narração (TTS) for mais longa que o clipe de origem,
+        # o vídeo repete em loop até cobrir a fala inteira em vez de cortar o áudio no meio.
+        # -t no final (depois dos dois -i) corta vídeo e áudio exatamente na duração da narração.
+        cmd = [ffmpeg, "-y",
+               "-stream_loop", "-1", "-i", str(src),
+               "-i", str(audio),
+               "-t", str(duration_seconds),
+               "-vf", scale_filter,
+               "-map", "0:v:0", "-map", "1:a:0",
+               *encode_opts,
+               "-c:a", "aac", "-b:a", "128k",
+               str(out)]
+    else:
+        cmd = [ffmpeg, "-y", "-i", str(src), "-t", str(duration_seconds), "-vf", scale_filter,
+               "-an", *encode_opts, str(out)]
     # margem maior que antes (+30s não bastava em CPU compartilhada/limitada)
     result = subprocess.run(cmd, capture_output=True, timeout=settings.video_timeout_seconds + 60)
     if result.returncode != 0 or not out.exists():
@@ -241,7 +301,7 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
         db.commit()
         db.refresh(existing)
         return existing
-    hook, rows = subtitle_plan(theme, trend_term, s.video_duration_seconds)
+    hook, script_texts = _script_texts(theme, trend_term)
     video_url: str | None = None
     digest = ""
     # tudo em disco, dentro de um diretório temporário que é apagado ao sair do with —
@@ -253,7 +313,23 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
         digest = _sha256_file(src)
         if render:
             out = root / "output.mp4"
-            render_video(src, rows, s, out)
+            audio_path: Path | None = None
+            # duração alvo parte do valor configurado; se o TTS rodar, passa a ser a
+            # duração real da fala, pra legenda e narração ficarem sincronizadas.
+            duration_seconds: float = float(s.video_duration_seconds)
+            if s.video_tts_enabled:
+                audio_path = root / "narration.mp3"
+                try:
+                    narration = ". ".join(script_texts)
+                    _tts_narration(narration, s.video_tts_voice, audio_path, s.video_timeout_seconds)
+                    duration_seconds = _probe_duration(audio_path, s.video_timeout_seconds)
+                except VideoSearchError:
+                    # TTS é bônus, não motivo pra derrubar o vídeo inteiro — segue mudo com a
+                    # duração configurada, igual ao comportamento antes do TTS existir.
+                    audio_path = None
+                    duration_seconds = float(s.video_duration_seconds)
+            _, rows = subtitle_plan(theme, trend_term, duration_seconds)
+            render_video(src, rows, s, out, duration_seconds, audio=audio_path)
             video_url = _upload_to_cloudinary(out, f"{theme}-{candidate.provider_id}-{uuid4().hex}", s)
     if existing:
         existing.query = query[:200]

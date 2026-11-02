@@ -133,11 +133,15 @@ class Settings(BaseSettings):
     # reduz bastante o tempo de encode em CPU fraca sem ficar visivelmente pior no feed.
     video_width: int = Field(default=720, ge=480, le=2160)
     video_height: int = Field(default=1280, ge=640, le=3840)
-    video_font_size: int = Field(default=64, ge=24, le=140)
+    # proporcional à largura de saída (720, antes 1080): 64 * 720/1080 ≈ 43
+    video_font_size: int = Field(default=43, ge=24, le=140)
     # 80MB era alto demais pra instâncias com 512MB de RAM (o ffmpeg decodificando
     # o vídeo soma várias vezes esse tamanho em memória); 25MB cobre os vídeos
     # curtos (até ~30s) que o VIDEO_CANDIDATE_MAX_WIDTH already limita.
     video_max_download_bytes: int = Field(default=25 * 1024 * 1024, ge=1_000_000)
+    # narração por voz com edge-tts (gratuito, sem chave de API)
+    video_tts_enabled: bool = True
+    video_tts_voice: str = "pt-BR-FranciscaNeural"  # outras opções: pt-BR-AntonioNeural
 
     # ------------------------------------------- assuntos do momento (automÃ¡tico)
     trend_auto_enabled: bool = True
