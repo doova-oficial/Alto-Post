@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 import sys
 import types
 
@@ -81,6 +82,25 @@ def test_search_videos_falls_back_to_pixabay_when_pexels_is_empty(monkeypatch):
     assert candidates[0].download_url.endswith("pixabay.mp4")
 
 
+def test_search_videos_can_require_pexels(monkeypatch):
+    from app.config import reset_settings_cache
+    from app.services.video_service import VideoSearchError, search_videos
+
+    monkeypatch.setenv("PEXELS_API_KEY", "pexels-test-key")
+    monkeypatch.setenv("PIXABAY_API_KEY", "pixabay-test-key")
+    monkeypatch.setenv("VIDEO_PIXABAY_FALLBACK_ENABLED", "false")
+    reset_settings_cache()
+    from app.config import get_settings
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "api.pexels.com"
+        return httpx.Response(200, json={"videos": []})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(VideoSearchError, match="nenhum vídeo"):
+            search_videos("chuva", get_settings(), client=client)
+
+
 def test_tts_generates_mp3_with_gtts(monkeypatch, tmp_path):
     from app.config import reset_settings_cache
     from app.services import video_service
@@ -106,6 +126,19 @@ def test_tts_generates_mp3_with_gtts(monkeypatch, tmp_path):
 
     assert output.read_bytes().startswith(b"ID3")
     assert calls == {"text": "Oi", "lang": "pt", "tld": "com.br", "slow": False}
+
+
+def test_auto_tts_does_not_fallback_to_gtts(monkeypatch, tmp_path):
+    from app.config import get_settings, reset_settings_cache
+    from app.services import video_service
+
+    monkeypatch.setenv("VIDEO_TTS_PROVIDER", "auto")
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    reset_settings_cache()
+
+    with pytest.raises(video_service.VideoSearchError, match="ElevenLabs não configurado"):
+        video_service._tts_narration("Oi", get_settings(), tmp_path / "narration.mp3", 5)
 
 
 def test_tts_prefers_elevenlabs_when_configured(monkeypatch, tmp_path):

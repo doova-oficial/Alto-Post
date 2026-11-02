@@ -6,7 +6,7 @@ e não envia a manchete original para o banco de mídia.
 
 ## Configuração
 
-Configure `PEXELS_API_KEY` (Pixabay é fallback), as credenciais do ElevenLabs (`ELEVENLABS_API_KEY` e
+Configure `PEXELS_API_KEY` (Pixabay só é fallback se `VIDEO_PIXABAY_FALLBACK_ENABLED=true`), as credenciais do ElevenLabs (`ELEVENLABS_API_KEY` e
 `ELEVENLABS_VOICE_ID`) e as três variáveis do Cloudinary: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` e
 `CLOUDINARY_API_SECRET`. O Dockerfile instala o `ffmpeg`, que converte o vídeo para 9:16, intercala até três
 placeholders com cortes secos, corta a duração configurada e queima o texto em quatro blocos de legenda sem borda preta.

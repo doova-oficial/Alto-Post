@@ -167,7 +167,7 @@ def search_videos(query: str, settings: Settings | None = None,
     c, own = _client(s, client)
     try:
         providers = [s.video_provider]
-        if s.video_provider == "pexels":
+        if s.video_provider == "pexels" and s.video_pixabay_fallback_enabled:
             providers.append("pixabay")
         for provider in providers:
             candidates = (_search_pexels(q, s, c) if provider == "pexels"
@@ -281,20 +281,17 @@ def _tts_elevenlabs(text: str, settings: Settings, out_path: Path, timeout: floa
 
 def _tts_narration(text: str, settings: Settings, out_path: Path, timeout: float,
                    elevenlabs_text: str | None = None) -> None:
-    """Gera voz neural quando disponível e usa gTTS como fallback gratuito."""
+    """Gera ElevenLabs; gTTS só roda quando escolhido explicitamente."""
     if settings.video_tts_provider in ("auto", "elevenlabs"):
-        if settings.elevenlabs_configured:
-            try:
-                _tts_elevenlabs(elevenlabs_text or text, settings, out_path, timeout)
-                return
-            except VideoSearchError:
-                if settings.video_tts_provider == "elevenlabs":
-                    raise
-                logger.warning("ElevenLabs falhou; usando gTTS como fallback")
-        elif settings.video_tts_provider == "elevenlabs":
+        if not settings.elevenlabs_configured:
             raise VideoSearchError("ElevenLabs não configurado: defina ELEVENLABS_API_KEY e ELEVENLABS_VOICE_ID")
-    _tts_gtts(text, settings.video_tts_lang, settings.video_tts_tld, settings.video_tts_slow,
-              out_path, timeout)
+        _tts_elevenlabs(elevenlabs_text or text, settings, out_path, timeout)
+        return
+    if settings.video_tts_provider == "gtts":
+        _tts_gtts(text, settings.video_tts_lang, settings.video_tts_tld, settings.video_tts_slow,
+                  out_path, timeout)
+        return
+    raise VideoSearchError(f"provedor de TTS inválido: {settings.video_tts_provider}")
 
 
 def _script_texts(theme: str, trend_term: str) -> tuple[str, list[str]]:

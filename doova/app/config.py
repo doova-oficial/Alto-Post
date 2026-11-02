@@ -126,6 +126,7 @@ class Settings(BaseSettings):
     video_enabled: bool = True
     # Pexels e o provedor principal; Pixabay continua disponivel como fallback.
     video_provider: Literal["pexels", "pixabay"] = "pexels"
+    video_pixabay_fallback_enabled: bool = True
     pexels_api_key: SecretStr | None = None
     # 45s estourava em instâncias com CPU compartilhada/limitada: o filtro de legenda
     # queimada (libass) é a parte mais pesada do ffmpeg, bem mais que scale/crop.

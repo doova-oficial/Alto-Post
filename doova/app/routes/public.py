@@ -31,6 +31,11 @@ def health(db: Session = Depends(get_db)):
         "groq_configured": s.groq_configured, "meta_configured": s.meta_configured,
         "public_base_url_configured": bool(s.public_base_url),
         "cloudinary_configured": s.cloudinary_configured,
+        "video_provider": s.video_provider,
+        "pexels_configured": s.pexels_configured,
+        "pixabay_fallback_enabled": s.video_pixabay_fallback_enabled,
+        "video_tts_provider": s.video_tts_provider,
+        "elevenlabs_configured": s.elevenlabs_configured,
     }
     return Response(content=__import__("json").dumps(body), media_type="application/json",
                     status_code=200 if db_ok else 503)

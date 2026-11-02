@@ -12,7 +12,10 @@ def _use_fake_groq():
 
 def test_health_is_public(client):
     r = client.get("/health")
-    assert r.status_code == 200 and r.json()["status"] == "ok" and r.json()["dry_run"] is True
+    body = r.json()
+    assert r.status_code == 200 and body["status"] == "ok" and body["dry_run"] is True
+    assert body["video_provider"] == "pexels"
+    assert body["video_tts_provider"] == "elevenlabs"
 
 
 def test_every_admin_route_requires_token(client):

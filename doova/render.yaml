@@ -73,6 +73,8 @@ services:
         sync: false
       - key: VIDEO_PROVIDER
         value: pexels
+      - key: VIDEO_PIXABAY_FALLBACK_ENABLED
+        value: "false"
       - key: VIDEO_SEGMENT_COUNT
         value: "3"
       - key: VIDEO_TTS_PROVIDER
