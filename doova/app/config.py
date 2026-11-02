@@ -137,6 +137,10 @@ class Settings(BaseSettings):
     video_height: int = Field(default=1280, ge=640, le=3840)
     # proporcional à largura de saída (720, antes 1080): 64 * 720/1080 ≈ 43
     video_font_size: int = Field(default=43, ge=24, le=140)
+    video_karaoke_enabled: bool = True
+    # Cores ASS em formato &HAABBGGRR: amarelo ativo sobre branco inativo.
+    video_karaoke_active_color: str = "&H0000FFFF"
+    video_karaoke_inactive_color: str = "&H00FFFFFF"
     # 80MB era alto demais pra instâncias com 512MB de RAM (o ffmpeg decodificando
     # o vídeo soma várias vezes esse tamanho em memória); 25MB cobre os vídeos
     # curtos (até ~30s) que o VIDEO_CANDIDATE_MAX_WIDTH already limita.

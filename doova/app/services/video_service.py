@@ -279,12 +279,13 @@ def _tts_elevenlabs(text: str, settings: Settings, out_path: Path, timeout: floa
         raise VideoSearchError("ElevenLabs não gerou um arquivo de áudio válido")
 
 
-def _tts_narration(text: str, settings: Settings, out_path: Path, timeout: float) -> None:
+def _tts_narration(text: str, settings: Settings, out_path: Path, timeout: float,
+                   elevenlabs_text: str | None = None) -> None:
     """Gera voz neural quando disponível e usa gTTS como fallback gratuito."""
     if settings.video_tts_provider in ("auto", "elevenlabs"):
         if settings.elevenlabs_configured:
             try:
-                _tts_elevenlabs(text, settings, out_path, timeout)
+                _tts_elevenlabs(elevenlabs_text or text, settings, out_path, timeout)
                 return
             except VideoSearchError:
                 if settings.video_tts_provider == "elevenlabs":
@@ -304,6 +305,29 @@ def _script_texts(theme: str, trend_term: str) -> tuple[str, list[str]]:
     return hook, texts
 
 
+def _elevenlabs_narration_prompt(script_texts: list[str], settings: Settings) -> str:
+    """Monta o texto emocional somente para a chamada do ElevenLabs.
+
+    As legendas continuam usando ``script_texts`` sem instrucoes de atuacao. O
+    gTTS tambem recebe o texto limpo, inclusive quando o ElevenLabs falha e o
+    modo ``auto`` faz fallback.
+    """
+    clean_text = ". ".join(script_texts)
+    if not (settings.elevenlabs_configured and settings.video_tts_provider in ("auto", "elevenlabs")):
+        return clean_text
+
+    emotion_cues = (
+        "[tom acolhedor, natural e conversacional]",
+        "[tom tranquilizador e prestativo]",
+        "[tom claro, positivo e encorajador]",
+        "[tom amigavel, convidativo e com energia]",
+    )
+    return ". ".join(
+        f"{emotion_cues[min(index, len(emotion_cues) - 1)]} {text}"
+        for index, text in enumerate(script_texts)
+    )
+
+
 def subtitle_plan(theme: str, trend_term: str, duration: float) -> tuple[str, list[dict[str, Any]]]:
     hook, texts = _script_texts(theme, trend_term)
     span = max(duration / len(texts), 1)
@@ -318,6 +342,62 @@ def _srt(rows: list[dict[str, Any]]) -> str:
     return "\n\n".join(f"{i}\n{stamp(x['start'])} --> {stamp(x['end'])}\n{x['text']}" for i, x in enumerate(rows, 1)) + "\n"
 
 
+def _ass_stamp(value: float) -> str:
+    centiseconds = max(0, int(round(value * 100)))
+    hours, centiseconds = divmod(centiseconds, 360000)
+    minutes, centiseconds = divmod(centiseconds, 6000)
+    seconds, centiseconds = divmod(centiseconds, 100)
+    return f"{hours}:{minutes:02}:{seconds:02}.{centiseconds:02}"
+
+
+def _ass_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+
+
+def _karaoke_text(text: str, duration: float) -> str:
+    words = text.split()
+    if not words:
+        return ""
+    total_centiseconds = max(len(words), int(round(duration * 100)))
+    weights = [max(len(word), 1) for word in words]
+    total_weight = sum(weights)
+    cursor = 0
+    parts: list[str] = []
+    for index, word in enumerate(words):
+        if index == len(words) - 1:
+            end = total_centiseconds
+        else:
+            end = max(cursor + 1, round(total_centiseconds * sum(weights[:index + 1]) / total_weight))
+        parts.append(f"{{\\k{end - cursor}}}{_ass_escape(word)}")
+        cursor = end
+    return " ".join(parts)
+
+
+def _ass(rows: list[dict[str, Any]], settings: Settings, font_name: str) -> str:
+    style = (
+        f"Style: Default,{font_name},{settings.video_font_size},"
+        f"{settings.video_karaoke_active_color},{settings.video_karaoke_inactive_color},"
+        "&H00000000,&H00000000,1,0,0,0,100,100,0,0,3,3,1,2,20,20,180,1"
+    )
+    events = [
+        f"Dialogue: 0,{_ass_stamp(row['start'])},{_ass_stamp(row['end'])},Default,,0,0,0,,"
+        f"{_karaoke_text(row['text'], row['end'] - row['start'])}"
+        for row in rows
+    ]
+    return "\n".join([
+        "[Script Info]", "ScriptType: v4.00+", "PlayResX: 720", "PlayResY: 1280", "",
+        "[V4+ Styles]",
+        "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,"
+        "Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,"
+        "Alignment,MarginL,MarginR,MarginV,Encoding",
+        style, "",
+        "[Events]",
+        "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
+        *events,
+        "",
+    ])
+
+
 def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out: Path,
                  duration_seconds: float, audio: Path | None = None) -> None:
     """Lê src (e, se houver, audio) e escreve em out, sem passar o vídeo pela memória do
@@ -328,10 +408,15 @@ def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out:
     subs = src.parent / "captions.srt"
     subs.write_text(_srt(rows), encoding="utf-8")
     font = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "Inter-Bold.otf"
-    subtitle_path = subs.as_posix().replace(":", "\\:")
-    subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName=Inter,FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=180'"
-    if font.exists():
-        subtitle_filter = subtitle_filter.replace("FontName=Inter", f"FontName={font.stem}")
+    font_name = font.stem if font.exists() else "Arial"
+    if settings.video_karaoke_enabled:
+        ass = src.parent / "captions.ass"
+        ass.write_text(_ass(rows, settings, font_name), encoding="utf-8")
+        subtitle_path = ass.as_posix().replace(":", "\\:")
+        subtitle_filter = f"subtitles={subtitle_path}"
+    else:
+        subtitle_path = subs.as_posix().replace(":", "\\:")
+        subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName={font_name},FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=180'"
     encode_opts = [
         "-c:v", "libx264",
         # ultrafast + sem b-frames: encoder mais simples, bem menos buffer de lookahead
@@ -438,7 +523,9 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
                 audio_path = root / "narration.mp3"
                 try:
                     narration = ". ".join(script_texts)
-                    _tts_narration(narration, s, audio_path, s.video_timeout_seconds)
+                    elevenlabs_narration = _elevenlabs_narration_prompt(script_texts, s)
+                    _tts_narration(narration, s, audio_path, s.video_timeout_seconds,
+                                   elevenlabs_text=elevenlabs_narration)
                     duration_seconds = _probe_duration(audio_path, s.video_timeout_seconds)
                 except VideoSearchError as e:
                     # TTS é bônus, não motivo pra derrubar o vídeo inteiro — segue mudo com a

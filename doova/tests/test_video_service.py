@@ -126,8 +126,46 @@ def test_tts_prefers_elevenlabs_when_configured(monkeypatch, tmp_path):
     monkeypatch.setattr(video_service.httpx, "post", fake_post)
     output = tmp_path / "neural.mp3"
 
-    video_service._tts_narration("Oi", get_settings(), output, 5)
+    video_service._tts_narration(
+        "Oi", get_settings(), output, 5, elevenlabs_text="[tom acolhedor] Oi"
+    )
 
     assert output.read_bytes().startswith(b"ID3")
     assert calls["url"].endswith("/voice-br")
     assert calls["headers"]["xi-api-key"] == "eleven-test-key"
+    assert calls["json"]["text"] == "[tom acolhedor] Oi"
+
+
+def test_emotion_cues_are_only_added_for_elevenlabs(monkeypatch):
+    from app.config import get_settings, reset_settings_cache
+    from app.services.video_service import _elevenlabs_narration_prompt
+
+    texts = ["Gancho", "Ajuda", "Doova", "Acao"]
+    clean = ". ".join(texts)
+
+    monkeypatch.setenv("VIDEO_TTS_PROVIDER", "gtts")
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    reset_settings_cache()
+    assert _elevenlabs_narration_prompt(texts, get_settings()) == clean
+
+    monkeypatch.setenv("VIDEO_TTS_PROVIDER", "auto")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "eleven-test-key")
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "voice-br")
+    reset_settings_cache()
+    prompt = _elevenlabs_narration_prompt(texts, get_settings())
+
+    assert "[tom acolhedor, natural e conversacional]" in prompt
+    assert "[tom amigavel, convidativo e com energia]" in prompt
+    assert all(text in prompt for text in texts)
+
+
+def test_ass_karaoke_marks_each_word_with_timing():
+    from app.config import get_settings
+    from app.services.video_service import _ass
+
+    result = _ass([{"start": 0, "end": 2, "text": "Chuva chegou"}], get_settings(), "Inter")
+
+    assert "Style: Default,Inter,43,&H0000FFFF,&H00FFFFFF" in result
+    assert "{\\k" in result
+    assert "Chuva" in result and "chegou" in result
