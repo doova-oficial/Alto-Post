@@ -6,9 +6,10 @@ e não envia a manchete original para o banco de mídia.
 
 ## Configuração
 
-Configure `PIXABAY_API_KEY` e mantenha `VIDEO_ENABLED=true`. O Dockerfile instala o `ffmpeg`, que converte o vídeo para
-9:16, corta a duração configurada e queima o texto em quatro blocos de legenda. O crédito e o link de origem ficam
-salvos no banco junto com o vídeo.
+Configure `PIXABAY_API_KEY` e as três variáveis do Cloudinary: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` e
+`CLOUDINARY_API_SECRET`. O Dockerfile instala o `ffmpeg`, que converte o vídeo para 9:16, corta a duração configurada
+e queima o texto em quatro blocos de legenda. O MP4 é enviado ao Cloudinary; o PostgreSQL guarda somente a URL,
+metadados e o roteiro. Vídeos antigos que ainda tenham `mp4_bytes` continuam sendo servidos.
 
 ## Endpoints
 

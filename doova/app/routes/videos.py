@@ -4,6 +4,7 @@ from __future__ import annotations
 import shutil
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -61,6 +62,7 @@ def check_video_from_trend(req: VideoCheckRequest):
         "theme_key": theme,
         "query": query,
         "pixabay_configured": settings.pixabay_configured,
+        "cloudinary_configured": settings.cloudinary_configured,
         "ffmpeg_available": bool(shutil.which("ffmpeg")),
         "downloads_performed": False,
         "results": [
@@ -101,6 +103,10 @@ def video_detail(video_id: str, db: Session = Depends(get_db)):
 @router.get("/videos/{video_id}/file", tags=["vídeos"], summary="Baixar o MP4 renderizado")
 def video_file(video_id: str, db: Session = Depends(get_db)):
     asset = db.get(VideoAsset, video_id)
-    if asset is None or not asset.mp4_bytes:
+    if asset is None:
+        raise HTTPException(404, "MP4 ainda nÃ£o renderizado")
+    if asset.video_url:
+        return RedirectResponse(asset.video_url, status_code=307)
+    if not asset.mp4_bytes:
         raise HTTPException(404, "MP4 ainda não renderizado")
     return Response(asset.mp4_bytes, media_type="video/mp4", headers={"Cache-Control": "public, max-age=86400"})

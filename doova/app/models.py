@@ -187,6 +187,7 @@ class VideoAsset(Base):
     width: Mapped[int] = mapped_column(Integer, default=0)
     height: Mapped[int] = mapped_column(Integer, default=0)
     duration_seconds: Mapped[float] = mapped_column(Float, default=0)
+    video_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     mp4_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     subtitle_text: Mapped[str] = mapped_column(Text, default="")
     hook: Mapped[str] = mapped_column(String(300), default="")

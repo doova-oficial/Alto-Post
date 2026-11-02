@@ -30,6 +30,7 @@ def health(db: Session = Depends(get_db)):
         "dry_run": s.dry_run, "paused": paused, "manual_approval": s.require_manual_approval,
         "groq_configured": s.groq_configured, "meta_configured": s.meta_configured,
         "public_base_url_configured": bool(s.public_base_url),
+        "cloudinary_configured": s.cloudinary_configured,
     }
     return Response(content=__import__("json").dumps(body), media_type="application/json",
                     status_code=200 if db_ok else 503)

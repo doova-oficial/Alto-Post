@@ -120,6 +120,9 @@ class Settings(BaseSettings):
     contact_email: str | None = None  # vai no User-Agent das buscas (boa prática com APIs abertas)
 
     # -------------------------------------------------------------- vÃ­deos
+    cloudinary_cloud_name: str | None = None
+    cloudinary_api_key: str | None = None
+    cloudinary_api_secret: SecretStr | None = None
     video_enabled: bool = True
     video_provider: Literal["pixabay"] = "pixabay"
     video_timeout_seconds: float = Field(default=45.0, gt=0)
@@ -163,6 +166,11 @@ class Settings(BaseSettings):
     def pixabay_configured(self) -> bool:
         return bool(self.pixabay_api_key and self.pixabay_api_key.get_secret_value())
 
+    @property
+    def cloudinary_configured(self) -> bool:
+        return bool(self.cloudinary_cloud_name and self.cloudinary_api_key and self.cloudinary_api_secret
+                    and self.cloudinary_api_secret.get_secret_value())
+
     def image_provider_list(self) -> list[str]:
         return [p.strip().lower() for p in self.image_providers.split(",")
                 if p.strip().lower() in ("openverse", "pixabay")]
@@ -197,7 +205,7 @@ class Settings(BaseSettings):
     def secret_values(self) -> list[str]:
         vals = []
         for s in (self.admin_api_token, self.groq_api_key, self.meta_access_token, self.meta_app_secret, self.token_encryption_key,
-                  self.pixabay_api_key, self.alert_webhook_url):
+                  self.pixabay_api_key, self.cloudinary_api_secret, self.alert_webhook_url):
             if s is not None and s.get_secret_value():
                 vals.append(s.get_secret_value())
         return vals

@@ -71,6 +71,12 @@ services:
         value: "true"
       - key: PIXABAY_API_KEY
         sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
       - key: TREND_AUTO_ENABLED
         value: "true"
       - key: TREND_AUTO_MAX_PER_DAY

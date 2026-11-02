@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import hashlib
-import json
+import io
 import shutil
 import subprocess
 import tempfile
+from uuid import uuid4
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -153,6 +154,36 @@ def render_video(source: bytes, rows: list[dict[str, Any]], settings: Settings) 
         return out.read_bytes()
 
 
+def _upload_to_cloudinary(data: bytes, asset_key: str, settings: Settings) -> str:
+    if not settings.cloudinary_configured:
+        raise VideoSearchError(
+            "Cloudinary nÃ£o configurado: defina CLOUDINARY_CLOUD_NAME, "
+            "CLOUDINARY_API_KEY e CLOUDINARY_API_SECRET"
+        )
+    try:
+        import cloudinary
+        from cloudinary.uploader import upload
+
+        cloudinary.config(
+            cloud_name=settings.cloudinary_cloud_name,
+            api_key=settings.cloudinary_api_key,
+            api_secret=settings.cloudinary_api_secret.get_secret_value(),
+            secure=True,
+        )
+        result = upload(
+            io.BytesIO(data), resource_type="video", folder="doova/videos",
+            public_id=asset_key, overwrite=False, unique_filename=False,
+        )
+        url = result.get("secure_url")
+        if not url:
+            raise VideoSearchError("Cloudinary nÃ£o retornou a URL do vÃ­deo")
+        return str(url)
+    except VideoSearchError:
+        raise
+    except Exception as e:
+        raise VideoSearchError(f"upload para o Cloudinary falhou: {type(e).__name__}: {e}") from e
+
+
 def create_video(db: Session, theme: str, trend_term: str, query: str, settings: Settings | None = None,
                  client: httpx.Client | None = None, render: bool = True) -> VideoAsset:
     s = settings or get_settings()
@@ -166,11 +197,12 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
     hook, rows = subtitle_plan(theme, trend_term, s.video_duration_seconds)
     raw = _download(candidate, s, client)
     rendered = render_video(raw, rows, s) if render else None
+    video_url = _upload_to_cloudinary(rendered, f"{theme}-{candidate.provider_id}-{uuid4().hex}", s) if rendered else None
     asset = VideoAsset(provider="pixabay", provider_id=candidate.provider_id, query=query[:200], title=candidate.title[:300],
                        creator=candidate.creator[:200], source="Pixabay", license="Pixabay Content License",
                        landing_url=candidate.landing_url[:500], download_url=candidate.download_url[:800],
                        width=candidate.width, height=candidate.height, duration_seconds=candidate.duration,
-                       mp4_bytes=rendered, subtitle_text=_srt(rows), hook=hook[:300], trend_term=trend_term[:200],
+                       video_url=video_url, mp4_bytes=None, subtitle_text=_srt(rows), hook=hook[:300], trend_term=trend_term[:200],
                        theme_key=theme[:80], metadata_json={"texts": rows, "sha256": hashlib.sha256(raw).hexdigest()})
     db.add(asset); db.commit(); db.refresh(asset)
     return asset
@@ -180,5 +212,6 @@ def public(asset: VideoAsset, base_url: str = "") -> dict[str, Any]:
     return {"id": asset.id, "provider": asset.provider, "query": asset.query, "title": asset.title,
             "creator": asset.creator, "source": asset.source, "license": asset.license,
             "landing_url": asset.landing_url, "trend_term": asset.trend_term, "theme_key": asset.theme_key,
-            "hook": asset.hook, "subtitle_text": asset.subtitle_text, "rendered": bool(asset.mp4_bytes),
-            "video_url": f"{base_url}/api/videos/{asset.id}/file"}
+            "hook": asset.hook, "subtitle_text": asset.subtitle_text,
+            "rendered": bool(asset.video_url or asset.mp4_bytes),
+            "video_url": asset.video_url or f"{base_url}/api/videos/{asset.id}/file"}
