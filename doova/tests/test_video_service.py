@@ -216,7 +216,7 @@ def test_elevenlabs_402_explains_library_voice_restriction(monkeypatch, tmp_path
         video_service._tts_narration("Oi", get_settings(), tmp_path / "neural.mp3", 5)
 
 
-def test_elevenlabs_narration_prompt_is_clean(monkeypatch):
+def test_elevenlabs_narration_prompt_adds_tags_only_when_supported(monkeypatch):
     from app.config import get_settings, reset_settings_cache
     from app.services.video_service import _elevenlabs_narration_prompt
 
@@ -232,12 +232,17 @@ def test_elevenlabs_narration_prompt_is_clean(monkeypatch):
     monkeypatch.setenv("VIDEO_TTS_PROVIDER", "auto")
     monkeypatch.setenv("ELEVENLABS_API_KEY", "eleven-test-key")
     monkeypatch.setenv("ELEVENLABS_VOICE_ID", "voice-br")
+    monkeypatch.setenv("ELEVENLABS_MODEL", "eleven_v4")
     reset_settings_cache()
     prompt = _elevenlabs_narration_prompt(texts, get_settings())
 
-    assert prompt == clean
-    assert "[tom" not in prompt
+    assert prompt.startswith("[curious] Gancho. [thoughtful] Ajuda")
+    assert prompt != clean
     assert all(text in prompt for text in texts)
+
+    monkeypatch.setenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
+    reset_settings_cache()
+    assert _elevenlabs_narration_prompt(texts, get_settings()) == clean
 
 
 def test_generated_video_image_is_created_dynamically(tmp_path):

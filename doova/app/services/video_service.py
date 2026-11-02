@@ -399,8 +399,18 @@ def _script_texts(theme: str, trend_term: str) -> tuple[str, list[str]]:
 
 
 def _elevenlabs_narration_prompt(script_texts: list[str], settings: Settings) -> str:
-    """Retorna somente o roteiro; instruções de tom não entram no TTS."""
-    return ". ".join(script_texts)
+    """Adiciona Audio Tags apenas aos modelos ElevenLabs que as suportam."""
+    clean = ". ".join(script_texts)
+    supported_models = {"eleven_v3", "eleven_v3_conversational", "eleven_v4", "eleven_v4_turbo"}
+    if (settings.video_tts_provider not in ("auto", "elevenlabs")
+            or not settings.elevenlabs_configured
+            or settings.elevenlabs_model not in supported_models):
+        return clean
+    tags = ("curious", "thoughtful", "confident", "excited")
+    return ". ".join(
+        f"[{tags[index] if index < len(tags) else 'confident'}] {text}"
+        for index, text in enumerate(script_texts)
+    )
 
 
 def subtitle_plan(theme: str, trend_term: str, duration: float) -> tuple[str, list[dict[str, Any]]]:

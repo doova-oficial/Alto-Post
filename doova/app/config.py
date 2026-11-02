@@ -156,7 +156,8 @@ class Settings(BaseSettings):
     video_tts_slow: bool = False
     elevenlabs_api_key: SecretStr | None = None
     elevenlabs_voice_id: str | None = None
-    elevenlabs_model: str = "eleven_multilingual_v2"
+    # Audio Tags entre colchetes funcionam oficialmente nos modelos v3/v4.
+    elevenlabs_model: str = "eleven_v4"
 
     # ------------------------------------------- assuntos do momento (automÃ¡tico)
     trend_auto_enabled: bool = True
