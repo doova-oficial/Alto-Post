@@ -515,18 +515,18 @@ def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], setti
         subtitle_path = subs.as_posix().replace(":", "\\:")
         subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName={font_name},FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=0,Alignment=2,MarginV=180'"
     base_scale = (f"scale={settings.video_width}:{settings.video_height}:"
-                  f"force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height},"
-                  # xfade exige timebase idêntico em todos os vídeos; o fps pode
-                  # reintroduzir timebases diferentes sem esta normalização.
-                  "fps=30,format=yuv420p,settb=AVTB,setsar=1")
+                  f"force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height}"
+                  )
     segment_duration = duration_seconds / len(sources)
     filters: list[str] = []
     labels: list[str] = []
     for index in range(len(sources)):
         label = f"v{index}"
         labels.append(f"[{label}]")
+        # xfade exige CFR e timebase idênticos. Em FFmpeg 7.x, setpts precisa
+        # vir antes de fps; depois normalizamos formato, timebase e SAR.
         filters.append(f"[{index}:v:0]{base_scale},trim=duration={segment_duration:.3f},"
-                       f"setpts=PTS-STARTPTS[{label}]")
+                       f"setpts=PTS-STARTPTS,fps=30,format=yuv420p,settb=AVTB,setsar=1[{label}]")
     transition_duration = min(0.35, segment_duration / 3)
     current_label = labels[0]
     current_duration = segment_duration
