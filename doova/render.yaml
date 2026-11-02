@@ -76,9 +76,17 @@ services:
       - key: VIDEO_PIXABAY_FALLBACK_ENABLED
         value: "false"
       - key: VIDEO_SEGMENT_COUNT
-        value: "3"
-      - key: VIDEO_GENERATED_IMAGE_COUNT
         value: "2"
+      - key: VIDEO_GENERATED_IMAGE_COUNT
+        value: "1"
+      - key: VIDEO_WIDTH
+        value: "1080"
+      - key: VIDEO_HEIGHT
+        value: "1920"
+      - key: VIDEO_FONT_SIZE
+        value: "64"
+      - key: VIDEO_MAX_DOWNLOAD_BYTES
+        value: "12582912"
       - key: VIDEO_TTS_PROVIDER
         value: elevenlabs
       - key: PEXELS_API_KEY

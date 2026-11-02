@@ -23,6 +23,10 @@ ficam registrados em `segments` no retorno da API e em `metadata_json`, com iní
 tipo de mídia e transição. Isso permite comparar depois o desempenho de cada trecho;
 retenção segundo a segundo ainda depende de uma fonte de métricas de Reels que forneça esse dado.
 
+Para instâncias com 512 MB, o perfil recomendado mantém 1080x1920, dois vídeos de stock,
+um card gerado, downloads de até 12 MB e uma thread do FFmpeg. Esses valores já estão
+no `render.yaml`; aumente-os somente se houver memória disponível.
+
 ## Endpoints
 
 - `POST /api/videos/trend` com `{"trend_term":"chuva em Goiânia", "render":true}` busca o vídeo, cria o gancho e renderiza o MP4.

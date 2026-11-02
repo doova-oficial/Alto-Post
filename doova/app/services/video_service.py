@@ -499,7 +499,8 @@ def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out:
         "-preset", "ultrafast", "-bf", "0",
         # trava threads do libx264 pra não disparar várias fatias simultâneas num host com
         # pouca RAM/CPU compartilhada — 2 é um bom equilíbrio pra instâncias pequenas
-        "-threads", "2",
+        "-threads", "1",
+        "-filter_threads", "1",
         "-pix_fmt", "yuv420p", "-movflags", "+faststart",
     ]
     scale_filter = (f"scale={settings.video_width}:{settings.video_height}:"
@@ -582,7 +583,7 @@ def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], setti
         current_label = output_label
         current_duration += segment_duration - transition_duration
     filters.append(f"{current_label}{subtitle_filter}[vout]")
-    cmd = [ffmpeg, "-y"]
+    cmd = [ffmpeg, "-y", "-filter_complex_threads", "1"]
     for source in sources:
         cmd.extend(_ffmpeg_loop_input(source))
     if audio is not None:
@@ -593,7 +594,8 @@ def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], setti
         cmd.extend(["-map", f"{len(sources)}:a:0", "-c:a", "aac", "-b:a", "128k"])
     else:
         cmd.append("-an")
-    cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-bf", "0", "-threads", "2",
+    cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-bf", "0", "-threads", "1",
+                "-filter_threads", "1",
                 "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)])
     result = subprocess.run(cmd, capture_output=True, timeout=settings.video_timeout_seconds + 60)
     if result.returncode != 0 or not out.exists():

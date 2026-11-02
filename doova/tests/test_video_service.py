@@ -269,7 +269,7 @@ def test_ass_karaoke_marks_each_word_with_timing():
 
     result = _ass([{"start": 0, "end": 2, "text": "Chuva chegou"}], get_settings(), "Inter")
 
-    assert "Style: Default,Inter,43,&H0000FFFF,&H00FFFFFF" in result
+    assert "Style: Default,Inter,64,&H0000FFFF,&H00FFFFFF" in result
     assert "{\\k" in result
     assert "Chuva" in result and "chegou" in result
 
@@ -315,6 +315,8 @@ def test_render_video_sources_builds_cuts_between_placeholders(monkeypatch, tmp_
     assert "xfade=transition=fade" in filter_graph
     assert "duration=0.350" in filter_graph
     assert "setpts=PTS-STARTPTS,fps=30,format=yuv420p,settb=AVTB,setsar=1" in filter_graph
+    assert command[command.index("-filter_complex_threads") + 1] == "1"
+    assert command[command.index("-threads") + 1] == "1"
     assert any(str(item).endswith("source-0.mp4") for item in command)
     assert any(str(item).endswith("source-1.mp4") for item in command)
     assert output.read_bytes() == b"fake output"

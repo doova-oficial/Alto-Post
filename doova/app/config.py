@@ -132,22 +132,22 @@ class Settings(BaseSettings):
     # queimada (libass) é a parte mais pesada do ffmpeg, bem mais que scale/crop.
     video_timeout_seconds: float = Field(default=90.0, gt=0)
     video_duration_seconds: int = Field(default=12, ge=5, le=60)
-    # 720x1280 em vez de 1080x1920: menos pixel pra escalar/cortar/compor legenda,
-    # reduz bastante o tempo de encode em CPU fraca sem ficar visivelmente pior no feed.
-    video_width: int = Field(default=720, ge=480, le=2160)
-    video_height: int = Field(default=1280, ge=640, le=3840)
-    # proporcional à largura de saída (720, antes 1080): 64 * 720/1080 ≈ 43
-    video_font_size: int = Field(default=43, ge=24, le=140)
+    # Mantem 1080x1920 para o Instagram; a economia de RAM vem da concorrencia,
+    # da quantidade de fontes e das threads do FFmpeg, nao da resolucao final.
+    video_width: int = Field(default=1080, ge=480, le=2160)
+    video_height: int = Field(default=1920, ge=640, le=3840)
+    # Fonte proporcional à resolução final de 1080x1920.
+    video_font_size: int = Field(default=64, ge=24, le=140)
     video_karaoke_enabled: bool = True
     # Cores ASS em formato &HAABBGGRR: amarelo ativo sobre branco inativo.
     video_karaoke_active_color: str = "&H0000FFFF"
     video_karaoke_inactive_color: str = "&H00FFFFFF"
-    video_segment_count: int = Field(default=3, ge=1, le=6)
-    video_generated_image_count: int = Field(default=2, ge=0, le=4)
-    # 80MB era alto demais pra instâncias com 512MB de RAM (o ffmpeg decodificando
-    # o vídeo soma várias vezes esse tamanho em memória); 25MB cobre os vídeos
+    video_segment_count: int = Field(default=2, ge=1, le=6)
+    video_generated_image_count: int = Field(default=1, ge=0, le=4)
+    # Downloads grandes são altos demais pra instâncias com 512MB de RAM (o ffmpeg
+    # decodificando o vídeo soma várias vezes esse tamanho em memória); 12MB cobre os vídeos
     # curtos (até ~30s) que o VIDEO_CANDIDATE_MAX_WIDTH already limita.
-    video_max_download_bytes: int = Field(default=25 * 1024 * 1024, ge=1_000_000)
+    video_max_download_bytes: int = Field(default=12 * 1024 * 1024, ge=1_000_000)
     # ElevenLabs e obrigatorio para os reels; gTTS so e usado se escolhido explicitamente.
     video_tts_provider: Literal["auto", "gtts", "elevenlabs"] = "elevenlabs"
     video_tts_enabled: bool = True
