@@ -20,6 +20,7 @@ class TemplateParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     template: str
+    creative_style: Literal["template", "auto", "editorial", "brutalist", "collage", "minimal", "split", "type_poster", "photo_card", "photo_full", "swiss_grid", "sticker", "gradient_wave", "quote"] = "auto"
     title: str = Field(min_length=1, max_length=160)
     subtitle: str | None = Field(default=None, max_length=240)
     body: str | None = Field(default=None, max_length=600)
@@ -35,6 +36,12 @@ class TemplateParams(BaseModel):
     title_position: Literal["top", "center", "bottom"] = "center"
     subtitle_position: Literal["above_title", "below_title"] = "below_title"
     text_align: Literal["left", "center"] = "left"
+    title_weight: Literal["semibold", "bold", "extrabold"] = "extrabold"
+    body_weight: Literal["regular", "medium", "semibold", "bold"] = "regular"
+    title_font_family: Literal["auto", "inter", "condensed", "serif_display", "slab", "lato"] = "auto"
+    subtitle_font_family: Literal["auto", "inter", "condensed", "serif_display", "slab", "lato"] = "auto"
+    body_font_family: Literal["auto", "inter", "condensed", "serif_display", "slab", "lato"] = "auto"
+    cta_font_family: Literal["auto", "inter", "condensed", "serif_display", "slab", "lato"] = "auto"
     logo_position: Literal["top_left", "top_right"] = "top_left"
     cta_align: Literal["left", "center"] = "left"
 
@@ -141,6 +148,12 @@ class TemplateConfig:
         return [
             {"key": k, "name": v.get("name"), "description": v.get("description"),
              "message_type": v.get("message_type"), "requires_photo": bool(v.get("requires_photo")),
+             "creative_styles": ["auto", "editorial", "brutalist", "collage", "minimal", "split",
+                                 "type_poster", "photo_card", "photo_full", "swiss_grid", "sticker",
+                                 "gradient_wave", "quote", "template"],
+             "title_weights": ["semibold", "bold", "extrabold"],
+             "body_weights": ["regular", "medium", "semibold", "bold"],
+             "font_families": ["auto", "inter", "condensed", "serif_display", "slab", "lato"],
              "defaults": v.get("defaults", {})}
             for k, v in self.templates.items()
         ]

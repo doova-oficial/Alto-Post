@@ -58,6 +58,7 @@ class Element:
     item_colors: dict[str, RGB] = field(default_factory=dict)
     min_key: str | None = None
     icon: str | None = None       # ícone do app dentro da pílula (tag)
+    font_family: str = "inter"
 
 
 @dataclass
@@ -104,8 +105,8 @@ class Renderer:
         self.tag_icon_color: RGB | None = None
 
     # ------------------------------------------------------------ primitivas
-    def font(self, weight: str, size: int):
-        return self.fonts.get(weight, size)
+    def font(self, weight: str, size: int, family: str = "inter"):
+        return self.fonts.get(weight, size, family)
 
     def fill_background(self, kind: str | None = None) -> list[RGB]:
         kind = kind or self.p.background
@@ -302,7 +303,11 @@ class Renderer:
         x = self.m if (self.p.cta_align == "left" and not full_width) else (self.W - w) / 2
         box = (int(x), int(y), int(x + w), int(y + h))
         self.draw.rounded_rectangle(box, radius=h // 2, fill=bg, outline=outline, width=4 if outline else 0)
-        self.draw.text((x + w / 2, y + h / 2), self.p.cta, font=self.font("bold", s), fill=fg, anchor="mm")
+        cta_family = self.p.cta_font_family
+        if cta_family == "auto":
+            cta_family = getattr(self, "role_font_families", {}).get("cta", "inter")
+        self.draw.text((x + w / 2, y + h / 2), self.p.cta,
+                       font=self.font("bold", s, cta_family), fill=fg, anchor="mm")
         self._place("cta", box, s, 1)
         return int(y)
 
@@ -311,25 +316,30 @@ class Renderer:
                           tag_fg: RGB, item_colors: dict[str, RGB] | None = None,
                           include_tag: bool = True) -> list[Element]:
         p = self.p
+        role_fonts = getattr(self, "role_font_families", {})
+        title_family = p.title_font_family if p.title_font_family != "auto" else role_fonts.get("title", "inter")
+        subtitle_family = p.subtitle_font_family if p.subtitle_font_family != "auto" else role_fonts.get("subtitle", "inter")
+        body_family = p.body_font_family if p.body_font_family != "auto" else role_fonts.get("body", "inter")
         els: list[Element] = []
         if include_tag and p.tag:
             els.append(Element("tag", p.tag, "bold", p.tag_size, tag_fg, gap_after=34, pill_bg=tag_bg,
-                               icon=self.tag_icon if p.app_ui else None))
+                               icon=self.tag_icon if p.app_ui else None, font_family=body_family))
         sub = Element("subtitle", p.subtitle, "medium", p.subtitle_size, sub_color, gap_after=30,
-                      line_spacing=1.22) if p.subtitle else None
+                      line_spacing=1.22, font_family=subtitle_family) if p.subtitle else None
         if sub and p.subtitle_position == "above_title":
             sub.gap_after = 22
             els.append(sub)
-        els.append(Element("title", p.title, "extrabold", p.title_size, title_color, gap_after=34,
-                           line_spacing=1.08))
+        els.append(Element("title", p.title, p.title_weight, p.title_size, title_color, gap_after=34,
+                           line_spacing=1.08, font_family=title_family))
         if sub and p.subtitle_position == "below_title":
             els.append(sub)
         if p.body:
-            els.append(Element("body", p.body, "regular", p.body_size, body_color, gap_after=30, line_spacing=1.32))
+            els.append(Element("body", p.body, p.body_weight, p.body_size, body_color, gap_after=30,
+                               line_spacing=1.32, font_family=body_family))
         if p.items:
-            els.append(Element("items", p.items, "semibold", p.body_size, body_color, gap_after=0,
+            els.append(Element("items", p.items, p.body_weight if p.body_weight != "regular" else "semibold", p.body_size, body_color, gap_after=0,
                                line_spacing=1.25, item_style=p.item_style, item_colors=item_colors or {},
-                               min_key="item"))
+                               min_key="item", font_family=body_family))
         if els:
             els[-1].gap_after = 0
         return els
@@ -348,7 +358,7 @@ class Renderer:
         if el.name == "logo":  # logotipo oficial como bloco do layout (altura = size)
             lg = self.logo_image()
             return Laid(el, size, size, [], width=round(lg.width * size / lg.height)) if lg else None
-        font = self.font(el.weight, size)
+        font = self.font(el.weight, size, el.font_family)
         if el.name == "items":
             blocks = []
             total = 0
@@ -951,16 +961,22 @@ def render(params: TemplateParams, cfg: TemplateConfig | None = None, fonts: Fon
     if cfg.requires_photo(params.template) and photo is None:
         raise PhotoRequiredError(f"o modelo '{params.template}' exige uma foto (photo_id)")
     r = Renderer(params, cfg, fonts, photo)
-    info = fn(r)
+    if params.creative_style != "template":
+        from app.services.creative_styles import render_creative
+        info = render_creative(r, params.creative_style)
+    else:
+        info = fn(r)
     r.check_bounds()
     img = r.img.convert("RGB")
     report = {
         "template": params.template,
+        "creative_style": info.get("style", "template"),
         "size": [r.W, r.H],
         "elements": r.placed,
         "scale_used": getattr(r, "scale_used", None),
         "text_amount": params.text_amount(),
         "font_fallback_used": fonts.fallback_used,
+        "font_families": getattr(r, "role_font_families", {}),
         "warnings": r.warnings,
         "photo_overlay_alpha": r.overlay_alpha,
         **r.contrast_report(info["text"]),

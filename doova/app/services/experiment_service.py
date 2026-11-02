@@ -30,6 +30,13 @@ MAX_COMBINATIONS = 8
 FACTORS: dict[str, dict[str, Any]] = {
     "title_position": {"param": "title_position", "allowed": ["top", "center", "bottom"]},
     "subtitle_position": {"param": "subtitle_position", "allowed": ["above_title", "below_title"]},
+    "text_align": {"param": "text_align", "allowed": ["left", "center"]},
+    "title_weight": {"param": "title_weight", "allowed": ["semibold", "bold", "extrabold"]},
+    "body_weight": {"param": "body_weight", "allowed": ["regular", "medium", "semibold", "bold"]},
+    "logo_position": {"param": "logo_position", "allowed": ["top_left", "top_right"]},
+    "cta_align": {"param": "cta_align", "allowed": ["left", "center"]},
+    "item_style": {"param": "item_style", "allowed": ["cards", "numbered", "checks"]},
+    "creative_style": {"param": "creative_style", "allowed": ["auto", "editorial", "brutalist", "collage", "minimal", "split", "type_poster", "photo_card", "photo_full", "swiss_grid", "sticker", "gradient_wave", "quote", "template"]},
     "title_size": {"param": "title_size", "type": int},
     "primary_color": {"param": "primary_color", "type": str},
     "accent_color": {"param": "accent_color", "type": str},

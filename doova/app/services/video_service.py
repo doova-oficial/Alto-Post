@@ -28,6 +28,9 @@ PEXELS_VIDEO_URL = "https://api.pexels.com/v1/videos/search"
 PIXABAY_VIDEO_URL = "https://pixabay.com/api/videos/"
 logger = logging.getLogger("app")
 
+DOOVA_RED = (255, 0, 0)
+DOOVA_MAGENTA = (255, 0, 208)
+
 VIDEO_CREATIVE_SPECS: dict[str, dict[str, Any]] = {
     "clean_center": {
         "name": "texto central sem imagem",
@@ -69,6 +72,48 @@ VIDEO_CREATIVE_SPECS: dict[str, dict[str, Any]] = {
         "text_position": "center",
         "has_context_image": False,
         "background": "brand_gradient",
+        "cta_position": "bottom",
+    },
+    "editorial_split": {
+        "name": "editorial assimétrico",
+        "text_position": "top",
+        "has_context_image": True,
+        "background": "video_frame",
+        "cta_position": "bottom",
+    },
+    "brutalist_type": {
+        "name": "tipografia brutalista",
+        "text_position": "center",
+        "has_context_image": False,
+        "background": "solid_brand",
+        "cta_position": "bottom",
+    },
+    "collage_badge": {
+        "name": "colagem com selo pop",
+        "text_position": "center",
+        "has_context_image": True,
+        "background": "video_frame",
+        "cta_position": "bottom",
+    },
+    "minimal_quote": {
+        "name": "minimalista com frase em destaque",
+        "text_position": "center",
+        "has_context_image": False,
+        "background": "brand_gradient",
+        "cta_position": "bottom",
+    },
+    "photo_frame": {
+        "name": "fotografia emoldurada",
+        "text_position": "bottom",
+        "has_context_image": True,
+        "background": "video_frame",
+        "cta_position": "bottom",
+    },
+    "kinetic_band": {
+        "name": "faixas diagonais de impacto",
+        "text_position": "center",
+        "has_context_image": False,
+        "background": "solid_brand",
         "cta_position": "bottom",
     },
 }
@@ -326,6 +371,53 @@ def _generate_video_image(theme: str, trend_term: str, text: str, out_path: Path
         _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
         draw.multiline_text((width // 2, (split_y + height) // 2 - 60), body, font=body_font,
                             fill=(255, 255, 255, 255), anchor="mm", align="center", spacing=14)
+    elif variant == "editorial_split":
+        _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
+        split = int(height * 0.48)
+        draw.rectangle((0, split, width, height), fill=(12, 9, 24, 242))
+        draw.rectangle((margin, int(height*.18), margin+16, split-32), fill=(*DOOVA_MAGENTA, 255))
+        draw.multiline_text((margin+42, int(height*.22)), body, font=body_font,
+                            fill=(255,255,255,255), spacing=14)
+    elif variant == "brutalist_type":
+        _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
+        draw.rectangle((0, int(height*.68), width, height), fill=(*DOOVA_RED, 255))
+        draw.rectangle((margin, int(height*.27), width-margin, int(height*.29)),
+                       fill=(*DOOVA_MAGENTA, 255))
+        draw.multiline_text((margin, int(height*.36)), body, font=body_font,
+                            fill=(255,255,255,255), spacing=14)
+    elif variant == "collage_badge":
+        _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
+        draw.polygon([(0,int(height*.28)),(width,int(height*.18)),
+                      (width,int(height*.62)),(0,int(height*.72))], fill=(12,9,24,235))
+        draw.ellipse((width-margin-145,int(height*.20),width-margin,int(height*.20)+145),
+                     fill=(*DOOVA_RED,255))
+        draw.multiline_text((margin,int(height*.37)),body,font=body_font,
+                            fill=(255,255,255,255),spacing=14)
+    elif variant == "minimal_quote":
+        _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
+        draw.rectangle((margin,int(height*.25),margin+8,int(height*.70)),
+                       fill=(*DOOVA_MAGENTA,255))
+        draw.text((margin+32,int(height*.27)),"“",font=body_font,fill=(*DOOVA_RED,255))
+        draw.multiline_text((margin+32,int(height*.40)),body,font=body_font,
+                            fill=(255,255,255,255),spacing=16)
+    elif variant == "photo_frame":
+        _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
+        pad = margin // 2
+        draw.rounded_rectangle((pad,int(height*.12),width-pad,int(height*.82)),
+                               radius=34,outline=(*DOOVA_MAGENTA,255),width=max(8,width//90))
+        for y in range(int(height*.54),height):
+            alpha = int(220*(y-height*.54)/max(1,height-int(height*.54)))
+            draw.line((0,y,width,y),fill=(10,8,20,alpha))
+        draw.multiline_text((margin,int(height*.61)),body,font=body_font,
+                            fill=(255,255,255,255),spacing=14)
+    elif variant == "kinetic_band":
+        _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
+        for offset, alpha in ((0,255),(70,190),(140,120)):
+            draw.polygon([(0,int(height*.28)+offset),(width,int(height*.18)+offset),
+                          (width,int(height*.42)+offset),(0,int(height*.52)+offset)],
+                         fill=(*DOOVA_RED,alpha))
+        draw.multiline_text((margin,int(height*.37)),body,font=body_font,
+                            fill=(255,255,255,255),spacing=16)
     else:  # clean_center (padrao)
         _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
         draw.rounded_rectangle((margin, 250, width - margin, height - 270), radius=38,

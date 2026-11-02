@@ -25,6 +25,16 @@ logger = logging.getLogger(__name__)
 
 BUNDLED_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 WEIGHTS = ["regular", "medium", "semibold", "bold", "extrabold"]
+FONT_FAMILIES = ("auto", "inter", "condensed", "serif_display", "slab", "lato")
+FAMILY_FILES: dict[str, dict[str, str]] = {
+    "inter": {"regular": "Inter-Regular.otf", "medium": "Inter-Medium.otf", "semibold": "Inter-SemiBold.otf",
+              "bold": "Inter-Bold.otf", "extrabold": "Inter-ExtraBold.otf"},
+    # Noto Sans Condensed provides a bundled, genuinely condensed display face.
+    "condensed": {"bold": "NotoSans-CondensedBold.ttf", "extrabold": "NotoSans-ExtraCondensedExtraBold.ttf"},
+    "serif_display": {"regular": "NotoSerifDisplay-Regular.ttf", "bold": "NotoSerifDisplay-Bold.ttf"},
+    "slab": {"regular": "RobotoSlab-Regular.otf", "bold": "RobotoSlab-Bold.otf"},
+    "lato": {"regular": "Lato-Regular.ttf", "bold": "Lato-Bold.ttf", "extrabold": "Lato-Black.ttf"},
+}
 
 # Nomes de arquivo candidatos por peso, em ordem de preferência.
 CANDIDATES: dict[str, list[str]] = {
@@ -76,7 +86,7 @@ class FontResolver:
             self.dirs += system_font_dirs()
         self._index: dict[str, Path] | None = None
         self._lock = threading.Lock()
-        self._cache: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
+        self._cache: dict[tuple[str, str, int], ImageFont.FreeTypeFont] = {}
         self.fallback_used = False
 
     def _build_index(self) -> dict[str, Path]:
@@ -100,26 +110,35 @@ class FontResolver:
                     self._index = self._build_index()
         return self._index
 
-    def path_for(self, weight: str) -> Path | None:
+    def path_for(self, weight: str, family: str = "inter") -> Path | None:
         if weight not in WEIGHTS:
             weight = "regular"
-        # peso exato, depois os vizinhos mais próximos
+        family = family if family in FAMILY_FILES else "inter"
+        family_files = FAMILY_FILES[family]
+        # Resolve o peso mais próximo dentro da família antes de recorrer à Inter.
         i = WEIGHTS.index(weight)
         order = sorted(range(len(WEIGHTS)), key=lambda j: (abs(j - i), -j))
         for j in order:
+            name = family_files.get(WEIGHTS[j])
+            if name:
+                path = self.index.get(name.lower())
+                if path is not None:
+                    return path
+        for j in order:
             for name in CANDIDATES[WEIGHTS[j]]:
-                p = self.index.get(name.lower())
-                if p is not None:
-                    return p
+                path = self.index.get(name.lower())
+                if path is not None:
+                    return path
         return None
 
-    def get(self, weight: str, size: int) -> ImageFont.FreeTypeFont:
+    def get(self, weight: str, size: int, family: str = "inter") -> ImageFont.FreeTypeFont:
         size = max(8, int(size))
-        key = (weight, size)
+        family = family if family in FAMILY_FILES else "inter"
+        key = (family, weight, size)
         font = self._cache.get(key)
         if font is not None:
             return font
-        path = self.path_for(weight)
+        path = self.path_for(weight, family)
         font = None
         if path is not None:
             try:
@@ -133,7 +152,13 @@ class FontResolver:
         return font
 
     def describe(self) -> dict:
-        return {w: (str(self.path_for(w)) if self.path_for(w) else "pillow-default") for w in WEIGHTS}
+        # Mantém o contrato anterior: pesos da família padrão (Inter).
+        return {w: (str(self.path_for(w, "inter")) if self.path_for(w, "inter") else "pillow-default")
+                for w in WEIGHTS}
+
+    def describe_families(self) -> dict:
+        return {family: {w: (str(self.path_for(w, family)) if self.path_for(w, family) else "pillow-default")
+                         for w in WEIGHTS} for family in FAMILY_FILES}
 
 
 @lru_cache

@@ -33,6 +33,7 @@ brand:
 
 # Valores aplicados a todos os templates (cada template pode sobrescrever).
 defaults:
+  creative_style: auto
   primary_color: pink
   accent_color: red
   text_color: auto
