@@ -192,12 +192,39 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
         raise VideoSearchError(f"nenhum vídeo adequado encontrado para '{query}'")
     existing = db.scalar(select(VideoAsset).where(VideoAsset.provider == "pixabay",
                                                    VideoAsset.provider_id == candidate.provider_id))
-    if existing:
+    if existing and (existing.video_url or not render):
+        return existing
+    if existing and existing.mp4_bytes:
+        existing.video_url = _upload_to_cloudinary(
+            existing.mp4_bytes, f"{theme}-{candidate.provider_id}-legacy-{uuid4().hex}", s
+        )
+        existing.mp4_bytes = None
+        db.commit()
+        db.refresh(existing)
         return existing
     hook, rows = subtitle_plan(theme, trend_term, s.video_duration_seconds)
     raw = _download(candidate, s, client)
     rendered = render_video(raw, rows, s) if render else None
     video_url = _upload_to_cloudinary(rendered, f"{theme}-{candidate.provider_id}-{uuid4().hex}", s) if rendered else None
+    if existing:
+        existing.query = query[:200]
+        existing.title = candidate.title[:300]
+        existing.creator = candidate.creator[:200]
+        existing.landing_url = candidate.landing_url[:500]
+        existing.download_url = candidate.download_url[:800]
+        existing.width = candidate.width
+        existing.height = candidate.height
+        existing.duration_seconds = candidate.duration
+        existing.video_url = video_url
+        existing.mp4_bytes = None
+        existing.subtitle_text = _srt(rows)
+        existing.hook = hook[:300]
+        existing.trend_term = trend_term[:200]
+        existing.theme_key = theme[:80]
+        existing.metadata_json = {"texts": rows, "sha256": hashlib.sha256(raw).hexdigest()}
+        db.commit()
+        db.refresh(existing)
+        return existing
     asset = VideoAsset(provider="pixabay", provider_id=candidate.provider_id, query=query[:200], title=candidate.title[:300],
                        creator=candidate.creator[:200], source="Pixabay", license="Pixabay Content License",
                        landing_url=candidate.landing_url[:500], download_url=candidate.download_url[:800],
