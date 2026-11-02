@@ -46,13 +46,13 @@ def _theme_from_check(req: VideoCheckRequest) -> str:
 
 
 @router.post("/videos/trend/check", tags=["vídeos"],
-             summary="Verificar Pixabay e ffmpeg sem baixar ou renderizar vídeo",
+             summary="Verificar Pexels/Pixabay e ffmpeg sem baixar ou renderizar vídeo",
              dependencies=[GenerationLimit])
 def check_video_from_trend(req: VideoCheckRequest):
-    """Consulta apenas metadados do Pixabay; não grava nada e não baixa MP4."""
+    """Consulta apenas metadados dos bancos; não grava nada e não baixa MP4."""
     theme = _theme_from_check(req)
     settings = get_settings()
-    query = TREND_THEMES[theme]["query_pt"]
+    query = req.trend_term
     try:
         candidates = search_videos(query, settings, client=http_client())
     except VideoSearchError as e:
@@ -61,6 +61,8 @@ def check_video_from_trend(req: VideoCheckRequest):
         "trend_term": req.trend_term,
         "theme_key": theme,
         "query": query,
+        "video_provider": settings.video_provider,
+        "pexels_configured": settings.pexels_configured,
         "pixabay_configured": settings.pixabay_configured,
         "cloudinary_configured": settings.cloudinary_configured,
         "ffmpeg_available": bool(shutil.which("ffmpeg")),
@@ -80,7 +82,7 @@ def video_from_trend(req: VideoTrendRequest, db: Session = Depends(get_db)):
     theme = _theme(req)
     settings = get_settings()
     try:
-        asset = create_video(db, theme, req.trend_term, TREND_THEMES[theme]["query_pt"], settings,
+        asset = create_video(db, theme, req.trend_term, req.trend_term, settings,
                              client=http_client(), render=req.render)
     except VideoSearchError as e:
         raise HTTPException(502, str(e))

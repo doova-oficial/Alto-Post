@@ -71,6 +71,12 @@ services:
         value: "true"
       - key: PIXABAY_API_KEY
         sync: false
+      - key: PEXELS_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_VOICE_ID
+        sync: false
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY

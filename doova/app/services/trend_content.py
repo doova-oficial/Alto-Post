@@ -273,11 +273,11 @@ def run_trend_auto(db: Session, settings: Settings | None = None, force: bool = 
         if photo is None:
             row.update(decision="descartado", reason="nenhuma foto com licença adequada encontrada")
             continue
-        if s.video_enabled and s.pixabay_configured:
+        if s.video_enabled and s.video_search_configured:
             try:
                 from app.services.video_service import VideoSearchError, create_video, public
 
-                video = create_video(db, theme, term, t["query_pt"], s, client=client, render=True)
+                video = create_video(db, theme, term, term, s, client=client, render=True)
                 row["video"] = public(video)
             except VideoSearchError as e:
                 row["video_error"] = str(e)

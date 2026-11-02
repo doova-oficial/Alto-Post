@@ -124,7 +124,9 @@ class Settings(BaseSettings):
     cloudinary_api_key: str | None = None
     cloudinary_api_secret: SecretStr | None = None
     video_enabled: bool = True
-    video_provider: Literal["pixabay"] = "pixabay"
+    # Pexels e o provedor principal; Pixabay continua disponivel como fallback.
+    video_provider: Literal["pexels", "pixabay"] = "pexels"
+    pexels_api_key: SecretStr | None = None
     # 45s estourava em instâncias com CPU compartilhada/limitada: o filtro de legenda
     # queimada (libass) é a parte mais pesada do ffmpeg, bem mais que scale/crop.
     video_timeout_seconds: float = Field(default=90.0, gt=0)
@@ -139,12 +141,15 @@ class Settings(BaseSettings):
     # o vídeo soma várias vezes esse tamanho em memória); 25MB cobre os vídeos
     # curtos (até ~30s) que o VIDEO_CANDIDATE_MAX_WIDTH already limita.
     video_max_download_bytes: int = Field(default=25 * 1024 * 1024, ge=1_000_000)
-    # narração por voz com edge-tts (gratuito, sem chave de API)
+    # "auto" usa ElevenLabs quando configurado e gTTS como fallback gratuito.
+    video_tts_provider: Literal["auto", "gtts", "elevenlabs"] = "auto"
     video_tts_enabled: bool = True
-    video_tts_voice: str = "pt-BR-FranciscaNeural"  # outras opções: pt-BR-AntonioNeural
-    # ritmo padrão do edge-tts soa devagar pra reels; +25% dá um passo mais adequado
-    # ao formato curto sem distorcer demais a voz. Aceita valores tipo "+0%", "+40%", "-10%".
-    video_tts_rate: str = "+25%"
+    video_tts_lang: str = "pt"
+    video_tts_tld: str = "com.br"
+    video_tts_slow: bool = False
+    elevenlabs_api_key: SecretStr | None = None
+    elevenlabs_voice_id: str | None = None
+    elevenlabs_model: str = "eleven_multilingual_v2"
 
     # ------------------------------------------- assuntos do momento (automÃ¡tico)
     trend_auto_enabled: bool = True
@@ -179,6 +184,19 @@ class Settings(BaseSettings):
     @property
     def pixabay_configured(self) -> bool:
         return bool(self.pixabay_api_key and self.pixabay_api_key.get_secret_value())
+
+    @property
+    def pexels_configured(self) -> bool:
+        return bool(self.pexels_api_key and self.pexels_api_key.get_secret_value())
+
+    @property
+    def video_search_configured(self) -> bool:
+        return self.pexels_configured or self.pixabay_configured
+
+    @property
+    def elevenlabs_configured(self) -> bool:
+        return bool(self.elevenlabs_api_key and self.elevenlabs_api_key.get_secret_value()
+                    and self.elevenlabs_voice_id)
 
     @property
     def cloudinary_configured(self) -> bool:
@@ -219,7 +237,8 @@ class Settings(BaseSettings):
     def secret_values(self) -> list[str]:
         vals = []
         for s in (self.admin_api_token, self.groq_api_key, self.meta_access_token, self.meta_app_secret, self.token_encryption_key,
-                  self.pixabay_api_key, self.cloudinary_api_secret, self.alert_webhook_url):
+                  self.pixabay_api_key, self.pexels_api_key, self.elevenlabs_api_key,
+                  self.cloudinary_api_secret, self.alert_webhook_url):
             if s is not None and s.get_secret_value():
                 vals.append(s.get_secret_value())
         return vals

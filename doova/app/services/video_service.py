@@ -22,6 +22,7 @@ from app.config import Settings, get_settings
 from app.database import utcnow
 from app.models import VideoAsset
 
+PEXELS_VIDEO_URL = "https://api.pexels.com/videos/search"
 PIXABAY_VIDEO_URL = "https://pixabay.com/api/videos/"
 logger = logging.getLogger("app")
 
@@ -32,6 +33,7 @@ class VideoSearchError(RuntimeError):
 
 @dataclass
 class VideoCandidate:
+    provider: str
     provider_id: str
     title: str
     creator: str
@@ -71,7 +73,7 @@ def _client(settings: Settings, client: httpx.Client | None) -> tuple[httpx.Clie
 VIDEO_CANDIDATE_MAX_WIDTH = 1280
 
 
-def _candidate(raw: dict[str, Any], query: str) -> VideoCandidate | None:
+def _candidate(raw: dict[str, Any], query: str, provider: str = "pixabay") -> VideoCandidate | None:
     videos = raw.get("videos") or {}
     # Pixabay devolve várias resoluções; evita tanto pixelado (muito pequeno) quanto
     # 4K desnecessário (decodificar 4K no ffmpeg consome muito mais RAM que o resultado exige).
@@ -82,33 +84,97 @@ def _candidate(raw: dict[str, Any], query: str) -> VideoCandidate | None:
     for item in choices:
         url = item.get("url")
         if url and int(item.get("width") or 0) >= 720:
-            return VideoCandidate(str(raw.get("id")), str(raw.get("tags") or query),
+            return VideoCandidate(provider, str(raw.get("id")), str(raw.get("tags") or query),
                                   str(raw.get("user") or "Pixabay"), str(raw.get("pageURL") or ""), url,
                                   int(item.get("width") or 0), int(item.get("height") or 0),
                                   float(raw.get("duration") or 0), query)
     return None
 
 
+def _pexels_candidate(raw: dict[str, Any], query: str) -> VideoCandidate | None:
+    """Converte a resposta do Pexels e escolhe um MP4 adequado ao encode."""
+    files = [item for item in raw.get("video_files", [])
+             if item.get("link") and item.get("file_type", "mp4") == "mp4"]
+    usable = [item for item in files
+              if 720 <= int(item.get("width") or 0) <= VIDEO_CANDIDATE_MAX_WIDTH]
+    choices = sorted(usable, key=lambda x: int(x.get("width") or 0), reverse=True) or \
+        sorted(files, key=lambda x: int(x.get("width") or 0), reverse=True)
+    for item in choices:
+        width = int(item.get("width") or 0)
+        if width < 720:
+            continue
+        return VideoCandidate(
+            "pexels", str(raw.get("id")), str(raw.get("url") or query),
+            str((raw.get("user") or {}).get("name") or "Pexels"),
+            str(raw.get("url") or ""), str(item["link"]), width,
+            int(item.get("height") or 0), float(raw.get("duration") or 0), query,
+        )
+    return None
+
+
+def _search_pexels(query: str, settings: Settings, client: httpx.Client) -> list[VideoCandidate]:
+    if not settings.pexels_configured:
+        return []
+    try:
+        response = client.get(
+            PEXELS_VIDEO_URL,
+            headers={"Authorization": settings.pexels_api_key.get_secret_value()},
+            params={"query": query, "per_page": 30, "orientation": "portrait"},
+            timeout=settings.video_timeout_seconds,
+        )
+        if response.status_code != 200:
+            logger.warning("Pexels videos HTTP %s; tentando o fallback", response.status_code)
+            return []
+        return [candidate for raw in response.json().get("videos", [])
+                if (candidate := _pexels_candidate(raw, query)) is not None]
+    except (httpx.TimeoutException, httpx.TransportError, ValueError) as e:
+        logger.warning("Pexels videos indisponivel (%s); tentando o fallback", type(e).__name__)
+        return []
+
+
+def _search_pixabay(query: str, settings: Settings, client: httpx.Client) -> list[VideoCandidate]:
+    if not settings.pixabay_configured:
+        return []
+    try:
+        response = client.get(
+            PIXABAY_VIDEO_URL,
+            params={"key": settings.pixabay_api_key.get_secret_value(), "q": query,
+                    "lang": "pt", "safesearch": "true", "per_page": 30},
+            timeout=settings.video_timeout_seconds,
+        )
+        if response.status_code != 200:
+            logger.warning("Pixabay videos HTTP %s", response.status_code)
+            return []
+        return [candidate for raw in response.json().get("hits", [])
+                if (candidate := _candidate(raw, query)) is not None]
+    except (httpx.TimeoutException, httpx.TransportError, ValueError) as e:
+        logger.warning("Pixabay videos indisponivel: %s", type(e).__name__)
+        return []
+
+
+# Busca Pexels primeiro e cai para Pixabay quando o provedor principal não
+# retorna candidatos adequados.
 def search_videos(query: str, settings: Settings | None = None,
                   client: httpx.Client | None = None) -> list[VideoCandidate]:
     s = settings or get_settings()
     if not s.video_enabled:
-        raise VideoSearchError("vídeos desativados (VIDEO_ENABLED=false)")
-    if not s.pixabay_configured:
-        raise VideoSearchError("PIXABAY_API_KEY é necessária para buscar vídeos gratuitos")
+        raise VideoSearchError("videos desativados (VIDEO_ENABLED=false)")
+    if not s.video_search_configured:
+        raise VideoSearchError("PEXELS_API_KEY ou PIXABAY_API_KEY e necessaria para buscar videos gratuitos")
     q = " ".join((query or "").split())[:100]
     if len(q) < 2:
-        raise VideoSearchError("termo de vídeo vazio")
+        raise VideoSearchError("termo de video vazio")
     c, own = _client(s, client)
     try:
-        r = c.get(PIXABAY_VIDEO_URL, params={"key": s.pixabay_api_key.get_secret_value(), "q": q,
-                                              "lang": "pt", "safesearch": "true", "per_page": 30},
-                  timeout=s.video_timeout_seconds)
-        if r.status_code != 200:
-            raise VideoSearchError(f"Pixabay vídeos HTTP {r.status_code}")
-        return [x for raw in r.json().get("hits", []) if (x := _candidate(raw, q)) is not None]
-    except (httpx.TimeoutException, httpx.TransportError, ValueError) as e:
-        raise VideoSearchError(f"Pixabay vídeos indisponível: {type(e).__name__}") from e
+        providers = [s.video_provider]
+        if s.video_provider == "pexels":
+            providers.append("pixabay")
+        for provider in providers:
+            candidates = (_search_pexels(q, s, c) if provider == "pexels"
+                          else _search_pixabay(q, s, c))
+            if candidates:
+                return candidates
+        raise VideoSearchError(f"nenhum vídeo encontrado para '{q}' nos provedores configurados")
     finally:
         if own:
             c.close()
@@ -163,22 +229,71 @@ def _probe_duration(path: Path, timeout: float) -> float:
         raise VideoSearchError(f"ffprobe devolveu formato inesperado: {e}") from e
 
 
-def _tts_narration(text: str, voice: str, rate: str, out_path: Path, timeout: float) -> None:
-    """Gera a narração em mp3 com edge-tts (gratuito, sem chave de API)."""
-    import edge_tts
+def _tts_gtts(text: str, language: str, tld: str, slow: bool,
+              out_path: Path, timeout: float) -> None:
+    from gtts import gTTS
 
     async def _run() -> None:
-        communicate = edge_tts.Communicate(text, voice, rate=rate)
-        await communicate.save(str(out_path))
+        tts = gTTS(text=text, lang=language, tld=tld, slow=slow)
+        await asyncio.to_thread(tts.save, str(out_path))
 
     try:
         asyncio.run(asyncio.wait_for(_run(), timeout=timeout))
     except asyncio.TimeoutError as e:
-        raise VideoSearchError("edge-tts demorou demais para gerar a narração") from e
+        raise VideoSearchError("gTTS demorou demais para gerar a narração") from e
     except Exception as e:
-        raise VideoSearchError(f"edge-tts falhou: {type(e).__name__}: {e}") from e
+        raise VideoSearchError(f"gTTS falhou: {type(e).__name__}: {e}") from e
     if not out_path.exists() or out_path.stat().st_size == 0:
-        raise VideoSearchError("edge-tts não gerou um arquivo de áudio válido")
+        raise VideoSearchError("gTTS não gerou um arquivo de áudio válido")
+
+
+def _tts_elevenlabs(text: str, settings: Settings, out_path: Path, timeout: float) -> None:
+    if not settings.elevenlabs_configured:
+        raise VideoSearchError("ELEVENLABS_API_KEY e ELEVENLABS_VOICE_ID são necessários")
+    try:
+        response = httpx.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{settings.elevenlabs_voice_id}",
+            headers={"xi-api-key": settings.elevenlabs_api_key.get_secret_value(),
+                     "Accept": "audio/mpeg", "Content-Type": "application/json"},
+            json={
+                "text": text,
+                "model_id": settings.elevenlabs_model,
+                "voice_settings": {
+                    "stability": 0.45,
+                    "similarity_boost": 0.75,
+                    "style": 0.2,
+                    "use_speaker_boost": True,
+                },
+            },
+            timeout=timeout,
+        )
+        if response.status_code != 200:
+            detail = response.text[-300:].replace("\n", " ")
+            raise VideoSearchError(f"ElevenLabs HTTP {response.status_code}: {detail}")
+        out_path.write_bytes(response.content)
+    except VideoSearchError:
+        raise
+    except (httpx.TimeoutException, httpx.TransportError, OSError) as e:
+        raise VideoSearchError(f"ElevenLabs falhou: {type(e).__name__}: {e}") from e
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        raise VideoSearchError("ElevenLabs não gerou um arquivo de áudio válido")
+
+
+def _tts_narration(text: str, settings: Settings, out_path: Path, timeout: float) -> None:
+    """Gera voz neural quando disponível e usa gTTS como fallback gratuito."""
+    if settings.video_tts_provider in ("auto", "elevenlabs"):
+        if settings.elevenlabs_configured:
+            try:
+                _tts_elevenlabs(text, settings, out_path, timeout)
+                return
+            except VideoSearchError:
+                if settings.video_tts_provider == "elevenlabs":
+                    raise
+                logger.warning("ElevenLabs falhou; usando gTTS como fallback")
+        elif settings.video_tts_provider == "elevenlabs":
+            raise VideoSearchError("ElevenLabs não configurado: defina ELEVENLABS_API_KEY e ELEVENLABS_VOICE_ID")
+    _tts_gtts(text, settings.video_tts_lang, settings.video_tts_tld, settings.video_tts_slow,
+              out_path, timeout)
 
 
 def _script_texts(theme: str, trend_term: str) -> tuple[str, list[str]]:
@@ -291,7 +406,7 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
     candidate = next(iter(search_videos(query, s, client)), None)
     if candidate is None:
         raise VideoSearchError(f"nenhum vídeo adequado encontrado para '{query}'")
-    existing = db.scalar(select(VideoAsset).where(VideoAsset.provider == "pixabay",
+    existing = db.scalar(select(VideoAsset).where(VideoAsset.provider == candidate.provider,
                                                    VideoAsset.provider_id == candidate.provider_id))
     if existing and (existing.video_url or not render):
         return existing
@@ -323,7 +438,7 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
                 audio_path = root / "narration.mp3"
                 try:
                     narration = ". ".join(script_texts)
-                    _tts_narration(narration, s.video_tts_voice, s.video_tts_rate, audio_path, s.video_timeout_seconds)
+                    _tts_narration(narration, s, audio_path, s.video_timeout_seconds)
                     duration_seconds = _probe_duration(audio_path, s.video_timeout_seconds)
                 except VideoSearchError as e:
                     # TTS é bônus, não motivo pra derrubar o vídeo inteiro — segue mudo com a
@@ -353,8 +468,10 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
         db.commit()
         db.refresh(existing)
         return existing
-    asset = VideoAsset(provider="pixabay", provider_id=candidate.provider_id, query=query[:200], title=candidate.title[:300],
-                       creator=candidate.creator[:200], source="Pixabay", license="Pixabay Content License",
+    source = "Pexels" if candidate.provider == "pexels" else "Pixabay"
+    license_name = "Pexels License" if candidate.provider == "pexels" else "Pixabay Content License"
+    asset = VideoAsset(provider=candidate.provider, provider_id=candidate.provider_id, query=query[:200], title=candidate.title[:300],
+                       creator=candidate.creator[:200], source=source, license=license_name,
                        landing_url=candidate.landing_url[:500], download_url=candidate.download_url[:800],
                        width=candidate.width, height=candidate.height, duration_seconds=candidate.duration,
                        video_url=video_url, mp4_bytes=None, subtitle_text=_srt(rows), hook=hook[:300], trend_term=trend_term[:200],
