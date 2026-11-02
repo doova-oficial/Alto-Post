@@ -35,6 +35,7 @@ def health(db: Session = Depends(get_db)):
         "pexels_configured": s.pexels_configured,
         "pixabay_fallback_enabled": s.video_pixabay_fallback_enabled,
         "video_tts_provider": s.video_tts_provider,
+        "video_tts_enabled": s.video_tts_enabled,
         "elevenlabs_configured": s.elevenlabs_configured,
     }
     return Response(content=__import__("json").dumps(body), media_type="application/json",

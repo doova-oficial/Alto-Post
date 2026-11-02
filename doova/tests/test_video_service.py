@@ -245,7 +245,8 @@ def test_render_video_sources_builds_cuts_between_placeholders(monkeypatch, tmp_
 
     command = calls["cmd"]
     filter_graph = command[command.index("-filter_complex") + 1]
-    assert "concat=n=2:v=1:a=0" in filter_graph
+    assert "xfade=transition=fade" in filter_graph
+    assert "duration=0.350" in filter_graph
     assert any(str(item).endswith("source-0.mp4") for item in command)
     assert any(str(item).endswith("source-1.mp4") for item in command)
     assert output.read_bytes() == b"fake output"

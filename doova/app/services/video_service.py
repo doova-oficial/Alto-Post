@@ -375,7 +375,7 @@ def _ass(rows: list[dict[str, Any]], settings: Settings, font_name: str) -> str:
     style = (
         f"Style: Default,{font_name},{settings.video_font_size},"
         f"{settings.video_karaoke_active_color},{settings.video_karaoke_inactive_color},"
-        "&H00FFFFFF,&H00000000,1,0,0,0,100,100,0,0,1,0,0,2,20,20,180,1"
+        "&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,3,0,2,20,20,180,1"
     )
     events = [
         f"Dialogue: 0,{_ass_stamp(row['start'])},{_ass_stamp(row['end'])},Default,,0,0,0,,"
@@ -414,7 +414,7 @@ def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out:
         subtitle_filter = f"subtitles={subtitle_path}"
     else:
         subtitle_path = subs.as_posix().replace(":", "\\:")
-        subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName={font_name},FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00FFFFFF,BorderStyle=1,Outline=0,Shadow=0,Alignment=2,MarginV=180'"
+        subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName={font_name},FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=0,Alignment=2,MarginV=180'"
     encode_opts = [
         "-c:v", "libx264",
         # ultrafast + sem b-frames: encoder mais simples, bem menos buffer de lookahead
@@ -471,9 +471,10 @@ def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], setti
         subtitle_filter = f"subtitles={subtitle_path}"
     else:
         subtitle_path = subs.as_posix().replace(":", "\\:")
-        subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName={font_name},FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00FFFFFF,BorderStyle=1,Outline=0,Shadow=0,Alignment=2,MarginV=180'"
+        subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName={font_name},FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=0,Alignment=2,MarginV=180'"
     base_scale = (f"scale={settings.video_width}:{settings.video_height}:"
-                  f"force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height}")
+                  f"force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height},"
+                  "fps=30,format=yuv420p")
     segment_duration = duration_seconds / len(sources)
     filters: list[str] = []
     labels: list[str] = []
@@ -482,8 +483,20 @@ def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], setti
         labels.append(f"[{label}]")
         filters.append(f"[{index}:v:0]{base_scale},trim=duration={segment_duration:.3f},"
                        f"setpts=PTS-STARTPTS[{label}]")
-    filters.append(f"{''.join(labels)}concat=n={len(sources)}:v=1:a=0[merged]")
-    filters.append(f"[merged]{subtitle_filter}[vout]")
+    transition_duration = min(0.35, segment_duration / 3)
+    current_label = labels[0]
+    current_duration = segment_duration
+    for index in range(1, len(sources)):
+        next_label = labels[index]
+        output_label = f"[x{index}]"
+        offset = current_duration - transition_duration
+        filters.append(
+            f"{current_label}{next_label}xfade=transition=fade:duration={transition_duration:.3f}:"
+            f"offset={offset:.3f}{output_label}"
+        )
+        current_label = output_label
+        current_duration += segment_duration - transition_duration
+    filters.append(f"{current_label}{subtitle_filter}[vout]")
     cmd = [ffmpeg, "-y"]
     for source in sources:
         cmd.extend(["-stream_loop", "-1", "-i", str(source)])
@@ -596,13 +609,7 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
                                    elevenlabs_text=elevenlabs_narration)
                     duration_seconds = _probe_duration(audio_path, s.video_timeout_seconds)
                 except VideoSearchError as e:
-                    if s.video_tts_provider == "elevenlabs":
-                        raise
-                    # TTS é bônus, não motivo pra derrubar o vídeo inteiro — segue mudo com a
-                    # duração configurada, igual ao comportamento antes do TTS existir.
-                    logger.warning("TTS falhou para %s/%s, seguindo sem áudio: %s", theme, trend_term, e)
-                    audio_path = None
-                    duration_seconds = float(s.video_duration_seconds)
+                    raise VideoSearchError(f"TTS falhou para {theme}/{trend_term}: {e}") from e
             _, rows = subtitle_plan(theme, trend_term, duration_seconds)
             _render_video_sources(sources, rows, s, out, duration_seconds, audio=audio_path)
             video_url = _upload_to_cloudinary(out, f"{theme}-{candidate.provider_id}-{uuid4().hex}", s)
