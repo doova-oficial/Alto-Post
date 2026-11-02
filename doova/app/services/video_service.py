@@ -110,20 +110,39 @@ def search_videos(query: str, settings: Settings | None = None,
             c.close()
 
 
-def _download(candidate: VideoCandidate, settings: Settings, client: httpx.Client | None) -> bytes:
+def _download(candidate: VideoCandidate, settings: Settings, client: httpx.Client | None,
+              dest: Path) -> int:
+    """Baixa em streaming direto pro disco (dest), sem acumular o arquivo inteiro em RAM.
+    Aborta assim que ultrapassa o limite configurado, sem baixar o resto. Retorna o tamanho em bytes."""
     c, own = _client(settings, client)
+    total = 0
     try:
-        r = c.get(candidate.download_url, timeout=settings.video_timeout_seconds)
-        if r.status_code != 200:
-            raise VideoSearchError(f"download do vídeo falhou (HTTP {r.status_code})")
-        if len(r.content) > settings.video_max_download_bytes:
-            raise VideoSearchError("vídeo maior que o limite configurado")
-        if not r.content.startswith(b"\x00\x00\x00"):
-            raise VideoSearchError("o banco não devolveu um MP4 válido")
-        return r.content
+        with c.stream("GET", candidate.download_url, timeout=settings.video_timeout_seconds) as r:
+            if r.status_code != 200:
+                raise VideoSearchError(f"download do vídeo falhou (HTTP {r.status_code})")
+            with dest.open("wb") as f:
+                first_chunk = True
+                for chunk in r.iter_bytes(chunk_size=256 * 1024):
+                    if first_chunk:
+                        if not chunk.startswith(b"\x00\x00\x00"):
+                            raise VideoSearchError("o banco não devolveu um MP4 válido")
+                        first_chunk = False
+                    total += len(chunk)
+                    if total > settings.video_max_download_bytes:
+                        raise VideoSearchError("vídeo maior que o limite configurado")
+                    f.write(chunk)
+        return total
     finally:
         if own:
             c.close()
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def subtitle_plan(theme: str, trend_term: str, duration: int) -> tuple[str, list[dict[str, Any]]]:
@@ -142,31 +161,38 @@ def _srt(rows: list[dict[str, Any]]) -> str:
     return "\n\n".join(f"{i}\n{stamp(x['start'])} --> {stamp(x['end'])}\n{x['text']}" for i, x in enumerate(rows, 1)) + "\n"
 
 
-def render_video(source: bytes, rows: list[dict[str, Any]], settings: Settings) -> bytes:
+def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out: Path) -> None:
+    """Lê src e escreve em out, sem passar o vídeo pela memória do Python em nenhum momento
+    (o ffmpeg processa stream a stream por fora do processo)."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise VideoSearchError("ffmpeg não instalado; use a imagem Docker do projeto ou instale ffmpeg")
-    with tempfile.TemporaryDirectory(prefix="doova-video-") as folder:
-        root = Path(folder); src, subs, out = root / "source.mp4", root / "captions.srt", root / "output.mp4"
-        src.write_bytes(source); subs.write_text(_srt(rows), encoding="utf-8")
-        font = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "Inter-Bold.otf"
-        subtitle_path = subs.as_posix().replace(":", "\\:")
-        subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName=Inter,FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=180'"
-        if font.exists():
-            subtitle_filter = subtitle_filter.replace("FontName=Inter", f"FontName={font.stem}")
-        cmd = [ffmpeg, "-y", "-i", str(src), "-t", str(settings.video_duration_seconds), "-vf",
-               f"scale={settings.video_width}:{settings.video_height}:force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height},{subtitle_filter}",
-               "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)]
-        result = subprocess.run(cmd, capture_output=True, timeout=settings.video_timeout_seconds + 30)
-        if result.returncode != 0 or not out.exists():
-            raise VideoSearchError(f"ffmpeg falhou: {result.stderr.decode(errors='replace')[-400:]}")
-        return out.read_bytes()
+    subs = src.parent / "captions.srt"
+    subs.write_text(_srt(rows), encoding="utf-8")
+    font = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "Inter-Bold.otf"
+    subtitle_path = subs.as_posix().replace(":", "\\:")
+    subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName=Inter,FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=180'"
+    if font.exists():
+        subtitle_filter = subtitle_filter.replace("FontName=Inter", f"FontName={font.stem}")
+    cmd = [ffmpeg, "-y", "-i", str(src), "-t", str(settings.video_duration_seconds), "-vf",
+           f"scale={settings.video_width}:{settings.video_height}:force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height},{subtitle_filter}",
+           "-an", "-c:v", "libx264",
+           # ultrafast + sem b-frames: encoder mais simples, bem menos buffer de lookahead
+           # (o preset padrão "medium" pode usar várias vezes mais RAM pra isso num clipe 1080x1920)
+           "-preset", "ultrafast", "-bf", "0",
+           # trava threads do libx264 pra não disparar várias fatias simultâneas num host com
+           # pouca RAM/CPU compartilhada — 2 é um bom equilíbrio pra instâncias pequenas
+           "-threads", "2",
+           "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)]
+    result = subprocess.run(cmd, capture_output=True, timeout=settings.video_timeout_seconds + 30)
+    if result.returncode != 0 or not out.exists():
+        raise VideoSearchError(f"ffmpeg falhou: {result.stderr.decode(errors='replace')[-400:]}")
 
 
-def _upload_to_cloudinary(data: bytes, asset_key: str, settings: Settings) -> str:
+def _upload_to_cloudinary(source: bytes | Path, asset_key: str, settings: Settings) -> str:
     if not settings.cloudinary_configured:
         raise VideoSearchError(
-            "Cloudinary nÃ£o configurado: defina CLOUDINARY_CLOUD_NAME, "
+            "Cloudinary não configurado: defina CLOUDINARY_CLOUD_NAME, "
             "CLOUDINARY_API_KEY e CLOUDINARY_API_SECRET"
         )
     try:
@@ -179,13 +205,16 @@ def _upload_to_cloudinary(data: bytes, asset_key: str, settings: Settings) -> st
             api_secret=settings.cloudinary_api_secret.get_secret_value(),
             secure=True,
         )
+        # passando o caminho do arquivo (str), o SDK do Cloudinary faz streaming multipart
+        # direto do disco — não carrega o vídeo inteiro em memória do Python antes de subir.
+        payload = str(source) if isinstance(source, Path) else io.BytesIO(source)
         result = upload(
-            io.BytesIO(data), resource_type="video", folder="doova/videos",
+            payload, resource_type="video", folder="doova/videos",
             public_id=asset_key, overwrite=False, unique_filename=False,
         )
         url = result.get("secure_url")
         if not url:
-            raise VideoSearchError("Cloudinary nÃ£o retornou a URL do vÃ­deo")
+            raise VideoSearchError("Cloudinary não retornou a URL do vídeo")
         return str(url)
     except VideoSearchError:
         raise
@@ -212,9 +241,19 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
         db.refresh(existing)
         return existing
     hook, rows = subtitle_plan(theme, trend_term, s.video_duration_seconds)
-    raw = _download(candidate, s, client)
-    rendered = render_video(raw, rows, s) if render else None
-    video_url = _upload_to_cloudinary(rendered, f"{theme}-{candidate.provider_id}-{uuid4().hex}", s) if rendered else None
+    video_url: str | None = None
+    digest = ""
+    # tudo em disco, dentro de um diretório temporário que é apagado ao sair do with —
+    # o vídeo não passa pela memória do Python em nenhuma etapa deste bloco.
+    with tempfile.TemporaryDirectory(prefix="doova-video-") as folder:
+        root = Path(folder)
+        src = root / "source.mp4"
+        _download(candidate, s, client, src)
+        digest = _sha256_file(src)
+        if render:
+            out = root / "output.mp4"
+            render_video(src, rows, s, out)
+            video_url = _upload_to_cloudinary(out, f"{theme}-{candidate.provider_id}-{uuid4().hex}", s)
     if existing:
         existing.query = query[:200]
         existing.title = candidate.title[:300]
@@ -230,7 +269,7 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
         existing.hook = hook[:300]
         existing.trend_term = trend_term[:200]
         existing.theme_key = theme[:80]
-        existing.metadata_json = {"texts": rows, "sha256": hashlib.sha256(raw).hexdigest()}
+        existing.metadata_json = {"texts": rows, "sha256": digest}
         db.commit()
         db.refresh(existing)
         return existing
@@ -239,7 +278,7 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
                        landing_url=candidate.landing_url[:500], download_url=candidate.download_url[:800],
                        width=candidate.width, height=candidate.height, duration_seconds=candidate.duration,
                        video_url=video_url, mp4_bytes=None, subtitle_text=_srt(rows), hook=hook[:300], trend_term=trend_term[:200],
-                       theme_key=theme[:80], metadata_json={"texts": rows, "sha256": hashlib.sha256(raw).hexdigest()})
+                       theme_key=theme[:80], metadata_json={"texts": rows, "sha256": digest})
     db.add(asset); db.commit(); db.refresh(asset)
     return asset
 
