@@ -125,11 +125,18 @@ class Settings(BaseSettings):
     cloudinary_api_secret: SecretStr | None = None
     video_enabled: bool = True
     video_provider: Literal["pixabay"] = "pixabay"
-    video_timeout_seconds: float = Field(default=45.0, gt=0)
+    # 45s estourava em instâncias com CPU compartilhada/limitada: o filtro de legenda
+    # queimada (libass) é a parte mais pesada do ffmpeg, bem mais que scale/crop.
+    video_timeout_seconds: float = Field(default=90.0, gt=0)
     video_duration_seconds: int = Field(default=12, ge=5, le=60)
-    video_width: int = Field(default=1080, ge=480, le=2160)
-    video_height: int = Field(default=1920, ge=640, le=3840)
+    # 720x1280 em vez de 1080x1920: menos pixel pra escalar/cortar/compor legenda,
+    # reduz bastante o tempo de encode em CPU fraca sem ficar visivelmente pior no feed.
+    video_width: int = Field(default=720, ge=480, le=2160)
+    video_height: int = Field(default=1280, ge=640, le=3840)
     video_font_size: int = Field(default=64, ge=24, le=140)
+    # 80MB era alto demais pra instâncias com 512MB de RAM (o ffmpeg decodificando
+    # o vídeo soma várias vezes esse tamanho em memória); 25MB cobre os vídeos
+    # curtos (até ~30s) que o VIDEO_CANDIDATE_MAX_WIDTH already limita.
     video_max_download_bytes: int = Field(default=25 * 1024 * 1024, ge=1_000_000)
 
     # ------------------------------------------- assuntos do momento (automÃ¡tico)

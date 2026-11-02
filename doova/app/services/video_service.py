@@ -184,7 +184,8 @@ def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out:
            # pouca RAM/CPU compartilhada — 2 é um bom equilíbrio pra instâncias pequenas
            "-threads", "2",
            "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)]
-    result = subprocess.run(cmd, capture_output=True, timeout=settings.video_timeout_seconds + 30)
+    # margem maior que antes (+30s não bastava em CPU compartilhada/limitada)
+    result = subprocess.run(cmd, capture_output=True, timeout=settings.video_timeout_seconds + 60)
     if result.returncode != 0 or not out.exists():
         raise VideoSearchError(f"ffmpeg falhou: {result.stderr.decode(errors='replace')[-400:]}")
 
