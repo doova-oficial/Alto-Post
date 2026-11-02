@@ -16,6 +16,13 @@ metadados e o roteiro. Vídeos antigos que ainda tenham `mp4_bytes` continuam se
 No ElevenLabs, `ELEVENLABS_VOICE_ID` deve apontar para uma voz própria disponível em `My Voices`.
 Vozes da Voice Library não ficam disponíveis pela API para contas gratuitas.
 
+O roteiro enviado ao ElevenLabs permanece limpo, sem instruções de tom entre colchetes.
+Além dos placeholders do Pexels, `VIDEO_GENERATED_IMAGE_COUNT` cria cards verticais locais
+com o tema e as falas do roteiro. Eles são intercalados no vídeo com transições `xfade` e
+ficam registrados em `segments` no retorno da API e em `metadata_json`, com início, fim,
+tipo de mídia e transição. Isso permite comparar depois o desempenho de cada trecho;
+retenção segundo a segundo ainda depende de uma fonte de métricas de Reels que forneça esse dado.
+
 ## Endpoints
 
 - `POST /api/videos/trend` com `{"trend_term":"chuva em Goiânia", "render":true}` busca o vídeo, cria o gancho e renderiza o MP4.

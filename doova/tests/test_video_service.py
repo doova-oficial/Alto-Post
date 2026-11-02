@@ -216,7 +216,7 @@ def test_elevenlabs_402_explains_library_voice_restriction(monkeypatch, tmp_path
         video_service._tts_narration("Oi", get_settings(), tmp_path / "neural.mp3", 5)
 
 
-def test_emotion_cues_are_only_added_for_elevenlabs(monkeypatch):
+def test_elevenlabs_narration_prompt_is_clean(monkeypatch):
     from app.config import get_settings, reset_settings_cache
     from app.services.video_service import _elevenlabs_narration_prompt
 
@@ -235,9 +235,32 @@ def test_emotion_cues_are_only_added_for_elevenlabs(monkeypatch):
     reset_settings_cache()
     prompt = _elevenlabs_narration_prompt(texts, get_settings())
 
-    assert "[tom acolhedor, natural e conversacional]" in prompt
-    assert "[tom amigavel, convidativo e com energia]" in prompt
+    assert prompt == clean
+    assert "[tom" not in prompt
     assert all(text in prompt for text in texts)
+
+
+def test_generated_video_image_is_created_dynamically(tmp_path):
+    from PIL import Image
+
+    from app.config import get_settings
+    from app.services.video_service import _generate_video_image
+
+    output = tmp_path / "generated.png"
+    _generate_video_image("chuva", "chuva forte", "Encontre serviços no Doova.", output,
+                          get_settings(), 0)
+
+    assert output.exists()
+    with Image.open(output) as image:
+        assert image.size == (get_settings().video_width, get_settings().video_height)
+
+
+def test_ffmpeg_uses_image_loop_for_generated_cards(tmp_path):
+    from app.services.video_service import _ffmpeg_loop_input
+
+    assert _ffmpeg_loop_input(tmp_path / "generated.png") == [
+        "-loop", "1", "-framerate", "30", "-i", str(tmp_path / "generated.png")
+    ]
 
 
 def test_ass_karaoke_marks_each_word_with_timing():

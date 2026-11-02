@@ -77,6 +77,8 @@ services:
         value: "false"
       - key: VIDEO_SEGMENT_COUNT
         value: "3"
+      - key: VIDEO_GENERATED_IMAGE_COUNT
+        value: "2"
       - key: VIDEO_TTS_PROVIDER
         value: elevenlabs
       - key: PEXELS_API_KEY

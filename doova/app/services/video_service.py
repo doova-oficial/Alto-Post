@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -98,6 +99,58 @@ def _video_query_variants(query: str) -> list[str]:
             variants.extend(aliases)
             break
     return list(dict.fromkeys(item for item in variants if len(item) >= 2))
+
+
+def _wrap_video_image_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont,
+                           max_width: int) -> str:
+    words = (text or "").split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if current and draw.textbbox((0, 0), candidate, font=font)[2] > max_width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return "\n".join(lines) or "Doova"
+
+
+def _generate_video_image(theme: str, trend_term: str, text: str, out_path: Path,
+                          settings: Settings, index: int) -> None:
+    """Cria um card vertical dinâmico para intercalar aos vídeos de stock."""
+    width, height = settings.video_width, settings.video_height
+    image = Image.new("RGB", (width, height))
+    draw = ImageDraw.Draw(image)
+    top = (255, 112, 32) if index % 2 == 0 else (91, 45, 166)
+    bottom = (91, 45, 166) if index % 2 == 0 else (18, 34, 74)
+    for y in range(height):
+        ratio = y / max(height - 1, 1)
+        color = tuple(round(top[channel] * (1 - ratio) + bottom[channel] * ratio) for channel in range(3))
+        draw.line((0, y, width, y), fill=color)
+
+    font_path = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "Inter-Bold.otf"
+    if font_path.exists():
+        label_font = ImageFont.truetype(str(font_path), max(26, width // 24))
+        body_font = ImageFont.truetype(str(font_path), max(42, width // 11))
+        footer_font = ImageFont.truetype(str(font_path), max(24, width // 30))
+    else:
+        label_font = body_font = footer_font = ImageFont.load_default()
+    margin = max(40, width // 12)
+    draw.rounded_rectangle((margin, 230, width - margin, height - 240), radius=36,
+                           fill=(12, 9, 24), outline=(255, 255, 255), width=3)
+    draw.text((margin, 90), "DOOVA", font=label_font, fill=(255, 255, 255))
+    draw.text((margin, 150), f"{theme.upper()}  •  {trend_term[:42]}", font=footer_font,
+              fill=(255, 229, 190))
+    body = _wrap_video_image_text(draw, text, body_font, width - 2 * margin - 70)
+    box_top, box_bottom = 330, height - 430
+    draw.multiline_text((width // 2, (box_top + box_bottom) // 2), body, font=body_font,
+                        fill=(255, 255, 255), anchor="mm", align="center", spacing=16)
+    draw.text((margin, height - 165), "Encontre ajuda no app Doova", font=footer_font,
+              fill=(255, 255, 255))
+    image.save(out_path, format="PNG", optimize=True)
 
 
 def _candidate(raw: dict[str, Any], query: str, provider: str = "pixabay") -> VideoCandidate | None:
@@ -346,26 +399,8 @@ def _script_texts(theme: str, trend_term: str) -> tuple[str, list[str]]:
 
 
 def _elevenlabs_narration_prompt(script_texts: list[str], settings: Settings) -> str:
-    """Monta o texto emocional somente para a chamada do ElevenLabs.
-
-    As legendas continuam usando ``script_texts`` sem instrucoes de atuacao. O
-    gTTS tambem recebe o texto limpo, inclusive quando o ElevenLabs falha e o
-    modo ``auto`` faz fallback.
-    """
-    clean_text = ". ".join(script_texts)
-    if not (settings.elevenlabs_configured and settings.video_tts_provider in ("auto", "elevenlabs")):
-        return clean_text
-
-    emotion_cues = (
-        "[tom acolhedor, natural e conversacional]",
-        "[tom tranquilizador e prestativo]",
-        "[tom claro, positivo e encorajador]",
-        "[tom amigavel, convidativo e com energia]",
-    )
-    return ". ".join(
-        f"{emotion_cues[min(index, len(emotion_cues) - 1)]} {text}"
-        for index, text in enumerate(script_texts)
-    )
+    """Retorna somente o roteiro; instruções de tom não entram no TTS."""
+    return ". ".join(script_texts)
 
 
 def subtitle_plan(theme: str, trend_term: str, duration: float) -> tuple[str, list[dict[str, Any]]]:
@@ -492,6 +527,12 @@ def render_video(src: Path, rows: list[dict[str, Any]], settings: Settings, out:
         raise VideoSearchError(f"ffmpeg falhou: {result.stderr.decode(errors='replace')[-2000:]}")
 
 
+def _ffmpeg_loop_input(path: Path) -> list[str]:
+    if path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+        return ["-loop", "1", "-framerate", "30", "-i", str(path)]
+    return ["-stream_loop", "-1", "-i", str(path)]
+
+
 def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], settings: Settings,
                           out: Path, duration_seconds: float, audio: Path | None = None) -> None:
     """Renderiza varios placeholders em sequência, com cortes secos entre eles."""
@@ -543,7 +584,7 @@ def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], setti
     filters.append(f"{current_label}{subtitle_filter}[vout]")
     cmd = [ffmpeg, "-y"]
     for source in sources:
-        cmd.extend(["-stream_loop", "-1", "-i", str(source)])
+        cmd.extend(_ffmpeg_loop_input(source))
     if audio is not None:
         cmd.extend(["-i", str(audio)])
     cmd.extend(["-t", str(duration_seconds), "-filter_complex", ";".join(filters),
@@ -621,23 +662,45 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
     # o vídeo não passa pela memória do Python em nenhuma etapa deste bloco.
     with tempfile.TemporaryDirectory(prefix="doova-video-") as folder:
         root = Path(folder)
-        sources: list[Path] = []
+        source_items: list[dict[str, Any]] = []
         digests: list[str] = []
         for index, source_candidate in enumerate(selected):
             source = root / f"source-{index}.mp4"
             try:
                 _download(source_candidate, s, client, source)
             except VideoSearchError:
-                if not sources:
+                if not source_items:
                     raise
                 logger.warning("ignorando placeholder %s/%s; os demais serao usados", source_candidate.provider,
                                source_candidate.provider_id)
                 continue
-            sources.append(source)
+            source_items.append({
+                "path": source,
+                "kind": "stock_video",
+                "provider": source_candidate.provider,
+                "provider_id": source_candidate.provider_id,
+                "title": source_candidate.title,
+            })
             digests.append(_sha256_file(source))
-        if not sources:
+        if not source_items:
             raise VideoSearchError("nenhum vídeo placeholder foi baixado")
         digest = hashlib.sha256("".join(digests).encode()).hexdigest()
+        generated_texts = script_texts[1:-1]
+        generated_count = min(s.video_generated_image_count, len(generated_texts))
+        for index in range(generated_count):
+            generated = root / f"generated-{index}.png"
+            _generate_video_image(theme, trend_term, generated_texts[index], generated, s, index)
+            insertion = min(len(source_items), 1 + index * 2)
+            source_items.insert(insertion, {
+                "path": generated,
+                "kind": "generated_image",
+                "provider": "doova",
+                "provider_id": f"generated-{index}",
+                "role": "script_support",
+                "text": generated_texts[index],
+            })
+            digests.append(_sha256_file(generated))
+        sources = [item["path"] for item in source_items]
         if render:
             out = root / "output.mp4"
             audio_path: Path | None = None
@@ -657,6 +720,32 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
             _, rows = subtitle_plan(theme, trend_term, duration_seconds)
             _render_video_sources(sources, rows, s, out, duration_seconds, audio=audio_path)
             video_url = _upload_to_cloudinary(out, f"{theme}-{candidate.provider_id}-{uuid4().hex}", s)
+        else:
+            duration_seconds = float(s.video_duration_seconds)
+            _, rows = subtitle_plan(theme, trend_term, duration_seconds)
+        segment_span = duration_seconds / len(source_items)
+        segments = [
+            {
+                "index": index,
+                "kind": item["kind"],
+                "provider": item.get("provider"),
+                "provider_id": item.get("provider_id"),
+                "role": item.get("role", "stock_placeholder"),
+                "text": item.get("text"),
+                "start_seconds": round(index * segment_span, 2),
+                "end_seconds": round((index + 1) * segment_span, 2),
+                "transition_in": "fade" if index else "start",
+            }
+            for index, item in enumerate(source_items)
+        ]
+        digest = hashlib.sha256("".join(digests).encode()).hexdigest()
+        video_metadata = {
+            "texts": rows,
+            "sha256": digest,
+            "segments": segments,
+            "transition": "xfade-fade",
+            "generated_image_count": generated_count,
+        }
     if existing:
         existing.query = query[:200]
         existing.title = candidate.title[:300]
@@ -672,7 +761,7 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
         existing.hook = hook[:300]
         existing.trend_term = trend_term[:200]
         existing.theme_key = theme[:80]
-        existing.metadata_json = {"texts": rows, "sha256": digest}
+        existing.metadata_json = video_metadata
         db.commit()
         db.refresh(existing)
         return existing
@@ -683,7 +772,7 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
                        landing_url=candidate.landing_url[:500], download_url=candidate.download_url[:800],
                        width=candidate.width, height=candidate.height, duration_seconds=candidate.duration,
                        video_url=video_url, mp4_bytes=None, subtitle_text=_srt(rows), hook=hook[:300], trend_term=trend_term[:200],
-                       theme_key=theme[:80], metadata_json={"texts": rows, "sha256": digest})
+                       theme_key=theme[:80], metadata_json=video_metadata)
     db.add(asset); db.commit(); db.refresh(asset)
     return asset
 
@@ -693,5 +782,6 @@ def public(asset: VideoAsset, base_url: str = "") -> dict[str, Any]:
             "creator": asset.creator, "source": asset.source, "license": asset.license,
             "landing_url": asset.landing_url, "trend_term": asset.trend_term, "theme_key": asset.theme_key,
             "hook": asset.hook, "subtitle_text": asset.subtitle_text,
+            "segments": (asset.metadata_json or {}).get("segments", []),
             "rendered": bool(asset.video_url or asset.mp4_bytes),
             "video_url": asset.video_url or f"{base_url}/api/videos/{asset.id}/file"}

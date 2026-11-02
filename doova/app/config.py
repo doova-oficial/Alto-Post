@@ -143,6 +143,7 @@ class Settings(BaseSettings):
     video_karaoke_active_color: str = "&H0000FFFF"
     video_karaoke_inactive_color: str = "&H00FFFFFF"
     video_segment_count: int = Field(default=3, ge=1, le=6)
+    video_generated_image_count: int = Field(default=2, ge=0, le=4)
     # 80MB era alto demais pra instâncias com 512MB de RAM (o ffmpeg decodificando
     # o vídeo soma várias vezes esse tamanho em memória); 25MB cobre os vídeos
     # curtos (até ~30s) que o VIDEO_CANDIDATE_MAX_WIDTH already limita.
