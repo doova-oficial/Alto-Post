@@ -43,7 +43,7 @@ VIDEO_CREATIVE_SPECS: dict[str, dict[str, Any]] = {
         "name": "foto contextual com texto inferior",
         "text_position": "bottom",
         "has_context_image": True,
-        "background": "video_frame",
+        "background": "context_photo",
         "cta_position": "bottom",
     },
     "hook_top": {
@@ -57,7 +57,7 @@ VIDEO_CREATIVE_SPECS: dict[str, dict[str, Any]] = {
         "name": "foto contextual com gancho no topo",
         "text_position": "top",
         "has_context_image": True,
-        "background": "video_frame",
+        "background": "context_photo",
         "cta_position": "bottom",
     },
     "badge_quote": {
@@ -78,7 +78,7 @@ VIDEO_CREATIVE_SPECS: dict[str, dict[str, Any]] = {
         "name": "editorial assimétrico",
         "text_position": "top",
         "has_context_image": True,
-        "background": "video_frame",
+        "background": "context_photo",
         "cta_position": "bottom",
     },
     "brutalist_type": {
@@ -92,7 +92,7 @@ VIDEO_CREATIVE_SPECS: dict[str, dict[str, Any]] = {
         "name": "colagem com selo pop",
         "text_position": "center",
         "has_context_image": True,
-        "background": "video_frame",
+        "background": "context_photo",
         "cta_position": "bottom",
     },
     "minimal_quote": {
@@ -106,7 +106,7 @@ VIDEO_CREATIVE_SPECS: dict[str, dict[str, Any]] = {
         "name": "fotografia emoldurada",
         "text_position": "bottom",
         "has_context_image": True,
-        "background": "video_frame",
+        "background": "context_photo",
         "cta_position": "bottom",
     },
     "kinetic_band": {
@@ -257,8 +257,8 @@ def _wrap_video_image_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont
 def _brand_gradient(width: int, height: int, index: int) -> Image.Image:
     image = Image.new("RGB", (width, height))
     draw = ImageDraw.Draw(image)
-    top = (255, 112, 32) if index % 2 == 0 else (91, 45, 166)
-    bottom = (91, 45, 166) if index % 2 == 0 else (18, 34, 74)
+    top = DOOVA_RED if index % 2 == 0 else DOOVA_MAGENTA
+    bottom = DOOVA_MAGENTA if index % 2 == 0 else (35, 0, 45)
     for y in range(height):
         ratio = y / max(height - 1, 1)
         color = tuple(round(top[channel] * (1 - ratio) + bottom[channel] * ratio) for channel in range(3))
@@ -281,7 +281,7 @@ def _brand_chip(draw: ImageDraw.ImageDraw, margin: int, label_font: ImageFont.Im
 def _cta_bar(draw: ImageDraw.ImageDraw, width: int, height: int, margin: int,
             footer_font: ImageFont.ImageFont, cta: str = "Instale o app Doova") -> None:
     cta_box = (margin, height - 205, width - margin, height - 105)
-    draw.rounded_rectangle(cta_box, radius=30, fill=(255, 112, 32, 255))
+    draw.rounded_rectangle(cta_box, radius=30, fill=(*DOOVA_MAGENTA, 255), outline=(*DOOVA_RED, 255), width=5)
     draw.text((width // 2, (cta_box[1] + cta_box[3]) // 2), cta, font=footer_font,
               fill=(255, 255, 255, 255), anchor="mm", align="center")
 
@@ -352,7 +352,7 @@ def _generate_video_image(theme: str, trend_term: str, text: str, out_path: Path
         _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
         draw.rounded_rectangle((margin, 280, width - margin, int(height * 0.63)), radius=38,
                                fill=(255, 255, 255, 244))
-        draw.rectangle((margin, 280, margin + 10, int(height * 0.63)), fill=(255, 112, 32, 255))
+        draw.rectangle((margin, 280, margin + 10, int(height * 0.63)), fill=(*DOOVA_RED, 255))
         draw.multiline_text((margin + 56, 390), body, font=body_font,
                             fill=(28, 16, 32, 255), align="left", spacing=14)
     elif variant == "badge_quote":
@@ -363,11 +363,11 @@ def _generate_video_image(theme: str, trend_term: str, text: str, out_path: Path
         draw.multiline_text((width // 2, height // 2), body, font=body_font,
                             fill=(255, 255, 255, 255), anchor="mm", align="center", spacing=16)
         draw.ellipse((width // 2 - 5, int(height * 0.58), width // 2 + 5, int(height * 0.58) + 10),
-                     fill=(255, 112, 32, 255))
+                     fill=(*DOOVA_RED, 255))
     elif variant == "split_block":
         split_y = int(height * 0.40)
         draw.rectangle((0, 0, width, split_y), fill=(12, 9, 24, 255))
-        draw.rectangle((0, split_y, width, split_y + 10), fill=(255, 112, 32, 255))
+        draw.rectangle((0, split_y, width, split_y + 10), fill=(*DOOVA_RED, 255))
         _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
         draw.multiline_text((width // 2, (split_y + height) // 2 - 60), body, font=body_font,
                             fill=(255, 255, 255, 255), anchor="mm", align="center", spacing=14)
@@ -1073,15 +1073,28 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
         generated_count = min(max(0, requested_count), len(generated_texts))
         spec = VIDEO_CREATIVE_SPECS[chosen_variant]
         context_frame: Path | None = None
+        context_photo_info: dict[str, Any] | None = None
         if spec["has_context_image"] and generated_count:
-            # um frame só, reaproveitado em todos os cartões gerados deste asset —
-            # 1 chamada ao ffmpeg em vez de uma por cartão.
-            context_frame = root / "context-frame.jpg"
+            # A imagem de apoio vem de um banco de fotos, nunca de um frame do vídeo.
+            # Se não houver foto semanticamente relacionada, o criativo usa o gradiente Doova.
             try:
-                _extract_context_frame(source_items[0]["path"], context_frame, s)
-            except VideoSearchError:
-                logger.warning("falha ao extrair frame de contexto; variante %s cai para fundo solido",
-                               chosen_variant)
+                from app.services.image_search import find_photo
+                image_query_en = (VIDEO_QUERY_ALIASES.get(theme) or (trend_term,))[0]
+                photo, photo_log = find_photo(db, image_query_en, trend_term, s, client)
+                if photo is not None:
+                    context_frame = root / "context-photo.jpg"
+                    context_frame.write_bytes(photo.jpg_bytes)
+                    context_photo_info = {
+                        "provider": photo.provider, "provider_id": photo.provider_id,
+                        "title": photo.title, "landing_url": photo.landing_url,
+                        "license": photo.license, "creator": photo.creator,
+                    }
+                else:
+                    logger.info("sem foto contextual para %s; usando placeholder Doova: %s",
+                                trend_term, "; ".join(photo_log[-3:]))
+            except Exception as exc:
+                logger.warning("busca de foto contextual falhou (%s); usando placeholder Doova",
+                               type(exc).__name__)
                 context_frame = None
         for index in range(generated_count):
             generated = root / f"generated-{index}.png"
@@ -1153,6 +1166,7 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
             "duration_requested": round(requested_duration, 2),
             "transition": chosen_transition,
             "generated_image_count": generated_count,
+            "context_image": context_photo_info or {"provider": "doova", "kind": "brand_placeholder"},
         }
     if existing:
         existing.query = query[:200]
@@ -1195,5 +1209,8 @@ def public(asset: VideoAsset, base_url: str = "") -> dict[str, Any]:
             "transition": (asset.metadata_json or {}).get("transition"),
             "duration_seconds": (asset.metadata_json or {}).get("duration_seconds"),
             "generated_image_count": (asset.metadata_json or {}).get("generated_image_count"),
+            "context_image": (asset.metadata_json or {}).get("context_image"),
+            "instagram_published": bool((asset.metadata_json or {}).get("instagram_media_id")),
+            "instagram_permalink": (asset.metadata_json or {}).get("instagram_permalink"),
             "rendered": bool(asset.video_url or asset.mp4_bytes),
             "video_url": asset.video_url or f"{base_url}/api/videos/{asset.id}/file"}
