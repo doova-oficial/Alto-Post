@@ -1,6 +1,8 @@
 """Geração de placeholders/reels a partir de assuntos em alta."""
 from __future__ import annotations
 
+import shutil
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -12,7 +14,7 @@ from app.models import VideoAsset
 from app.routes.deps import http_client
 from app.security import AdminDep, GenerationLimit
 from app.services.trend_content import TREND_THEMES, match_theme
-from app.services.video_service import VideoSearchError, create_video, public
+from app.services.video_service import VideoSearchError, create_video, public, search_videos
 
 router = APIRouter(prefix="/api", dependencies=[AdminDep])
 
@@ -23,11 +25,51 @@ class VideoTrendRequest(BaseModel):
     render: bool = True
 
 
+class VideoCheckRequest(BaseModel):
+    trend_term: str = Field(min_length=2, max_length=200)
+    theme_key: str | None = Field(default=None, max_length=80)
+
+
 def _theme(req: VideoTrendRequest) -> str:
     theme = req.theme_key or match_theme(req.trend_term)
     if theme not in TREND_THEMES:
         raise HTTPException(422, "a tendência não corresponde a um tema de serviço seguro")
     return theme
+
+
+def _theme_from_check(req: VideoCheckRequest) -> str:
+    theme = req.theme_key or match_theme(req.trend_term)
+    if theme not in TREND_THEMES:
+        raise HTTPException(422, "a tendência não corresponde a um tema de serviço seguro")
+    return theme
+
+
+@router.post("/videos/trend/check", tags=["vídeos"],
+             summary="Verificar Pixabay e ffmpeg sem baixar ou renderizar vídeo",
+             dependencies=[GenerationLimit])
+def check_video_from_trend(req: VideoCheckRequest):
+    """Consulta apenas metadados do Pixabay; não grava nada e não baixa MP4."""
+    theme = _theme_from_check(req)
+    settings = get_settings()
+    query = TREND_THEMES[theme]["query_pt"]
+    try:
+        candidates = search_videos(query, settings, client=http_client())
+    except VideoSearchError as e:
+        raise HTTPException(502, str(e))
+    return {
+        "trend_term": req.trend_term,
+        "theme_key": theme,
+        "query": query,
+        "pixabay_configured": settings.pixabay_configured,
+        "ffmpeg_available": bool(shutil.which("ffmpeg")),
+        "downloads_performed": False,
+        "results": [
+            {"provider_id": x.provider_id, "title": x.title, "creator": x.creator,
+             "landing_url": x.landing_url, "width": x.width, "height": x.height,
+             "duration_seconds": x.duration}
+            for x in candidates[:10]
+        ],
+    }
 
 
 @router.post("/videos/trend", tags=["vídeos"], summary="Buscar vídeo e criar reel com gancho e legendas",
