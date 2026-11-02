@@ -130,7 +130,7 @@ class Settings(BaseSettings):
     video_width: int = Field(default=1080, ge=480, le=2160)
     video_height: int = Field(default=1920, ge=640, le=3840)
     video_font_size: int = Field(default=64, ge=24, le=140)
-    video_max_download_bytes: int = Field(default=80 * 1024 * 1024, ge=1_000_000)
+    video_max_download_bytes: int = Field(default=25 * 1024 * 1024, ge=1_000_000)
 
     # ------------------------------------------- assuntos do momento (automÃ¡tico)
     trend_auto_enabled: bool = True

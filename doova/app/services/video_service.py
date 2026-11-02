@@ -62,10 +62,19 @@ def _client(settings: Settings, client: httpx.Client | None) -> tuple[httpx.Clie
     return httpx.Client(timeout=settings.video_timeout_seconds, follow_redirects=True), True
 
 
+# teto de largura do candidato: baixar 4K só pra reescalar pra 1080x1920 estoura RAM
+# em planos pequenos (512MB) à toa — o maior lado do vídeo final já cobre o necessário.
+VIDEO_CANDIDATE_MAX_WIDTH = 1280
+
+
 def _candidate(raw: dict[str, Any], query: str) -> VideoCandidate | None:
     videos = raw.get("videos") or {}
-    # Pixabay devolve várias resoluções; prioriza grande para não pixelar ao publicar em 9:16.
-    choices = sorted(videos.values(), key=lambda x: int(x.get("width") or 0), reverse=True)
+    # Pixabay devolve várias resoluções; evita tanto pixelado (muito pequeno) quanto
+    # 4K desnecessário (decodificar 4K no ffmpeg consome muito mais RAM que o resultado exige).
+    usable = [item for item in videos.values()
+             if item.get("url") and 720 <= int(item.get("width") or 0) <= VIDEO_CANDIDATE_MAX_WIDTH]
+    choices = sorted(usable, key=lambda x: int(x.get("width") or 0), reverse=True) or \
+        sorted(videos.values(), key=lambda x: int(x.get("width") or 0))  # sem opção no teto: pega a menor disponível
     for item in choices:
         url = item.get("url")
         if url and int(item.get("width") or 0) >= 720:

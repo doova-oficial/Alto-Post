@@ -104,7 +104,7 @@ def video_detail(video_id: str, db: Session = Depends(get_db)):
 def video_file(video_id: str, db: Session = Depends(get_db)):
     asset = db.get(VideoAsset, video_id)
     if asset is None:
-        raise HTTPException(404, "MP4 ainda nÃ£o renderizado")
+        raise HTTPException(404, "MP4 ainda no renderizado")
     if asset.video_url:
         return RedirectResponse(asset.video_url, status_code=307)
     if not asset.mp4_bytes:
