@@ -22,7 +22,7 @@ from app.config import Settings, get_settings
 from app.database import utcnow
 from app.models import VideoAsset
 
-PEXELS_VIDEO_URL = "https://api.pexels.com/videos/search"
+PEXELS_VIDEO_URL = "https://api.pexels.com/v1/videos/search"
 PIXABAY_VIDEO_URL = "https://pixabay.com/api/videos/"
 logger = logging.getLogger("app")
 
@@ -121,7 +121,9 @@ def _candidate(raw: dict[str, Any], query: str, provider: str = "pixabay") -> Vi
 def _pexels_candidate(raw: dict[str, Any], query: str) -> VideoCandidate | None:
     """Converte a resposta do Pexels e escolhe um MP4 adequado ao encode."""
     files = [item for item in raw.get("video_files", [])
-             if item.get("link") and item.get("file_type", "mp4") == "mp4"]
+             if item.get("link") and (
+                 str(item.get("file_type") or "mp4").casefold() in {"mp4", "video/mp4"}
+             )]
     usable = [item for item in files
               if 720 <= int(item.get("width") or 0) <= VIDEO_CANDIDATE_MAX_WIDTH]
     choices = sorted(usable, key=lambda x: int(x.get("width") or 0), reverse=True) or \
@@ -146,7 +148,9 @@ def _search_pexels(query: str, settings: Settings, client: httpx.Client) -> list
         response = client.get(
             PEXELS_VIDEO_URL,
             headers={"Authorization": settings.pexels_api_key.get_secret_value()},
-            params={"query": query, "per_page": 30, "orientation": "portrait"},
+            # O render final faz crop para 9:16; exigir portrait aqui elimina
+            # muitos resultados relevantes de chuva, reparos e serviços.
+            params={"query": query, "per_page": 30},
             timeout=settings.video_timeout_seconds,
         )
         if response.status_code != 200:

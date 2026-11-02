@@ -13,8 +13,8 @@ def _pexels_video() -> dict:
         "duration": 8,
         "user": {"name": "Criador Pexels"},
         "video_files": [
-            {"link": "https://cdn.example/low.mp4", "file_type": "mp4", "width": 640, "height": 1138},
-            {"link": "https://cdn.example/hd.mp4", "file_type": "mp4", "width": 1080, "height": 1920},
+            {"link": "https://cdn.example/low.mp4", "file_type": "video/mp4", "width": 640, "height": 1138},
+            {"link": "https://cdn.example/hd.mp4", "file_type": "video/mp4", "width": 1080, "height": 1920},
         ],
     }
 
@@ -44,7 +44,9 @@ def test_search_videos_prefers_pexels(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.url.host or "")
         assert request.headers["Authorization"] == "pexels-test-key"
+        assert request.url.path == "/v1/videos/search"
         assert request.url.params["query"] == "chuva"
+        assert "orientation" not in request.url.params
         return httpx.Response(200, json={"videos": [_pexels_video()]})
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
