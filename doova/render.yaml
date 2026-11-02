@@ -79,6 +79,8 @@ services:
         value: "2"
       - key: VIDEO_GENERATED_IMAGE_COUNT
         value: "1"
+      - key: VIDEO_CREATIVE_VARIANT
+        value: auto
       - key: VIDEO_WIDTH
         value: "1080"
       - key: VIDEO_HEIGHT

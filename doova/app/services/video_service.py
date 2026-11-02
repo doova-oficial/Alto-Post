@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import itertools
 import json
 import logging
 import shutil
@@ -15,8 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from PIL import Image, ImageDraw, ImageFont
-from sqlalchemy import select
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
@@ -26,6 +27,96 @@ from app.models import VideoAsset
 PEXELS_VIDEO_URL = "https://api.pexels.com/v1/videos/search"
 PIXABAY_VIDEO_URL = "https://pixabay.com/api/videos/"
 logger = logging.getLogger("app")
+
+VIDEO_CREATIVE_SPECS: dict[str, dict[str, Any]] = {
+    "clean_center": {
+        "name": "texto central sem imagem",
+        "text_position": "center",
+        "has_context_image": False,
+        "background": "brand_gradient",
+        "cta_position": "bottom",
+    },
+    "context_photo_bottom": {
+        "name": "foto contextual com texto inferior",
+        "text_position": "bottom",
+        "has_context_image": True,
+        "background": "video_frame",
+        "cta_position": "bottom",
+    },
+    "hook_top": {
+        "name": "gancho no topo sem imagem",
+        "text_position": "top",
+        "has_context_image": False,
+        "background": "solid_brand",
+        "cta_position": "bottom",
+    },
+    "photo_scrim_top": {
+        "name": "foto contextual com gancho no topo",
+        "text_position": "top",
+        "has_context_image": True,
+        "background": "video_frame",
+        "cta_position": "bottom",
+    },
+    "badge_quote": {
+        "name": "selo com citação central",
+        "text_position": "center",
+        "has_context_image": False,
+        "background": "solid_brand",
+        "cta_position": "bottom",
+    },
+    "split_block": {
+        "name": "bloco dividido com barra de destaque",
+        "text_position": "center",
+        "has_context_image": False,
+        "background": "brand_gradient",
+        "cta_position": "bottom",
+    },
+}
+
+# Nomes válidos do filtro xfade do ffmpeg usados como níveis do fator "transição".
+VIDEO_TRANSITIONS: tuple[str, ...] = ("fade", "wipeleft", "circleopen", "slideup")
+
+# Fatores de retenção testáveis em vídeo, no mesmo espírito do FACTORS de
+# experiment_service.py (app/services/experiment_service.py) para fotos: cada um
+# vira um nível explícito passado a create_video(), nunca um palpite da IA.
+MAX_VIDEO_COMBINATIONS = 8
+VIDEO_FACTORS: dict[str, dict[str, Any]] = {
+    "video_variant": {"allowed": list(VIDEO_CREATIVE_SPECS)},
+    "video_transition": {"allowed": list(VIDEO_TRANSITIONS)},
+    "video_duration_seconds": {"type": int, "min": 5, "max": 60},
+    "video_generated_image_count": {"type": int, "min": 0, "max": 4},
+}
+
+
+def validate_video_factors(factors: dict[str, list]) -> None:
+    if not factors:
+        raise VideoSearchError("informe ao menos um fator de vídeo")
+    for name, levels in factors.items():
+        spec = VIDEO_FACTORS.get(name)
+        if spec is None:
+            raise VideoSearchError(f"fator de vídeo desconhecido: {name}; use um de {sorted(VIDEO_FACTORS)}")
+        if not isinstance(levels, list) or len(levels) < 2 or len(set(map(str, levels))) != len(levels):
+            raise VideoSearchError(f"o fator {name} precisa de pelo menos dois níveis distintos")
+        if "allowed" in spec and any(l not in spec["allowed"] for l in levels):
+            raise VideoSearchError(f"níveis inválidos para {name}: use {spec['allowed']}")
+        if spec.get("type") is int:
+            if any(not isinstance(l, int) for l in levels):
+                raise VideoSearchError(f"o fator {name} aceita somente números inteiros")
+            lo, hi = spec.get("min"), spec.get("max")
+            if any(not (lo <= l <= hi) for l in levels):
+                raise VideoSearchError(f"{name} deve estar entre {lo} e {hi}")
+    combos = 1
+    for levels in factors.values():
+        combos *= len(levels)
+    if combos > MAX_VIDEO_COMBINATIONS:
+        raise VideoSearchError(f"{combos} combinações; o máximo é {MAX_VIDEO_COMBINATIONS}. "
+                               "Teste menos fatores por vez.")
+
+
+def video_combinations(factors: dict[str, list]) -> list[dict[str, Any]]:
+    """Mesmo produto cartesiano de experiment_service.combinations(), para vídeo."""
+    names = sorted(factors)
+    return [dict(zip(names, vals)) for vals in itertools.product(*(factors[n] for n in names))]
 
 
 class VideoSearchError(RuntimeError):
@@ -118,10 +209,7 @@ def _wrap_video_image_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont
     return "\n".join(lines) or "Doova"
 
 
-def _generate_video_image(theme: str, trend_term: str, text: str, out_path: Path,
-                          settings: Settings, index: int) -> None:
-    """Cria um card vertical dinâmico para intercalar aos vídeos de stock."""
-    width, height = settings.video_width, settings.video_height
+def _brand_gradient(width: int, height: int, index: int) -> Image.Image:
     image = Image.new("RGB", (width, height))
     draw = ImageDraw.Draw(image)
     top = (255, 112, 32) if index % 2 == 0 else (91, 45, 166)
@@ -130,27 +218,156 @@ def _generate_video_image(theme: str, trend_term: str, text: str, out_path: Path
         ratio = y / max(height - 1, 1)
         color = tuple(round(top[channel] * (1 - ratio) + bottom[channel] * ratio) for channel in range(3))
         draw.line((0, y, width, y), fill=color)
+    return image
 
+
+def _brand_chip(draw: ImageDraw.ImageDraw, margin: int, label_font: ImageFont.ImageFont,
+                footer_font: ImageFont.ImageFont, theme: str, trend_term: str,
+                light: bool = False) -> None:
+    """Desenha o selo DOOVA + tema no topo, igual em toda variante, pra manter identidade visual."""
+    text_color = (28, 16, 32, 255) if light else (255, 255, 255, 255)
+    chip_color = (255, 255, 255, 230) if light else (255, 255, 255, 40)
+    draw.rounded_rectangle((margin, 70, margin + 170, 70 + 56), radius=16, fill=chip_color)
+    draw.text((margin + 20, 86), "DOOVA", font=label_font, fill=text_color)
+    draw.text((margin, 150), f"{theme.upper()}  •  {trend_term[:42]}", font=footer_font,
+              fill=(28, 16, 32, 255) if light else (255, 229, 190, 255))
+
+
+def _cta_bar(draw: ImageDraw.ImageDraw, width: int, height: int, margin: int,
+            footer_font: ImageFont.ImageFont, cta: str = "Instale o app Doova") -> None:
+    cta_box = (margin, height - 205, width - margin, height - 105)
+    draw.rounded_rectangle(cta_box, radius=30, fill=(255, 112, 32, 255))
+    draw.text((width // 2, (cta_box[1] + cta_box[3]) // 2), cta, font=footer_font,
+              fill=(255, 255, 255, 255), anchor="mm", align="center")
+
+
+def _extract_context_frame(source: Path, out_path: Path, settings: Settings) -> None:
+    """Extrai um frame do placeholder para a variante que usa contexto visual."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise VideoSearchError("ffmpeg nao instalado; impossivel extrair frame contextual")
+    scale_filter = (f"scale={settings.video_width}:{settings.video_height}:"
+                    f"force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height}")
+    cmd = [ffmpeg, "-y", "-ss", "0.8", "-i", str(source), "-frames:v", "1",
+           "-vf", scale_filter, "-q:v", "3", str(out_path)]
+    _run_ffmpeg(cmd, out_path, settings)
+
+
+def _generate_video_image(theme: str, trend_term: str, text: str, out_path: Path,
+                          settings: Settings, index: int, variant: str = "clean_center",
+                          background_path: Path | None = None) -> None:
+    """Gera um criativo deterministico com layout/fatores mensuraveis.
+
+    Nao usa IA generativa: cada variante e um esqueleto de campanha repetivel,
+    para que a comparacao posterior identifique o que mudou. As 6 variantes de
+    VIDEO_CREATIVE_SPECS cobrem 3 eixos: presenca de foto de contexto, posicao
+    do texto (topo/centro/base) e composicao do cartao (solido/bloco/selo).
+    """
+    spec = VIDEO_CREATIVE_SPECS.get(variant)
+    if spec is None:
+        raise VideoSearchError(f"variante visual de video invalida: {variant}")
+    width, height = settings.video_width, settings.video_height
+    use_photo = bool(spec["has_context_image"] and background_path and background_path.exists())
+    if use_photo:
+        with Image.open(background_path) as source_image:
+            image = ImageOps.fit(source_image.convert("RGB"), (width, height),
+                                 method=Image.Resampling.LANCZOS)
+        image = ImageEnhance.Brightness(image).enhance(0.5)
+        image = ImageEnhance.Contrast(image).enhance(1.08)
+    else:
+        image = _brand_gradient(width, height, index)
+    draw = ImageDraw.Draw(image, "RGBA")
     font_path = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "Inter-Bold.otf"
+    extrabold_path = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "Inter-ExtraBold.otf"
     if font_path.exists():
-        label_font = ImageFont.truetype(str(font_path), max(26, width // 24))
-        body_font = ImageFont.truetype(str(font_path), max(42, width // 11))
-        footer_font = ImageFont.truetype(str(font_path), max(24, width // 30))
+        label_font = ImageFont.truetype(str(font_path), max(26, width // 32))
+        body_font = ImageFont.truetype(str((extrabold_path if extrabold_path.exists() else font_path)),
+                                       max(48, min(84, width // 13)))
+        footer_font = ImageFont.truetype(str(font_path), max(26, width // 30))
     else:
         label_font = body_font = footer_font = ImageFont.load_default()
-    margin = max(40, width // 12)
-    draw.rounded_rectangle((margin, 230, width - margin, height - 240), radius=36,
-                           fill=(12, 9, 24), outline=(255, 255, 255), width=3)
-    draw.text((margin, 90), "DOOVA", font=label_font, fill=(255, 255, 255))
-    draw.text((margin, 150), f"{theme.upper()}  •  {trend_term[:42]}", font=footer_font,
-              fill=(255, 229, 190))
-    body = _wrap_video_image_text(draw, text, body_font, width - 2 * margin - 70)
-    box_top, box_bottom = 330, height - 430
-    draw.multiline_text((width // 2, (box_top + box_bottom) // 2), body, font=body_font,
-                        fill=(255, 255, 255), anchor="mm", align="center", spacing=16)
-    draw.text((margin, height - 165), "Encontre ajuda no app Doova", font=footer_font,
-              fill=(255, 255, 255))
+    margin = max(56, width // 12)
+    body = _wrap_video_image_text(draw, text, body_font, width - 2 * margin - 80)
+
+    if variant in ("context_photo_bottom", "photo_scrim_top"):
+        # scrim em degrade (nao um retangulo solido) pra a foto continuar visivel
+        band_top, band_bottom = (int(height * 0.50), height) if variant == "context_photo_bottom" \
+            else (0, int(height * 0.46))
+        for y in range(band_top, band_bottom):
+            span = band_bottom - band_top
+            ratio = (y - band_top) / max(span - 1, 1)
+            ratio = ratio if variant == "context_photo_bottom" else 1 - ratio
+            alpha = int(235 * min(1.0, ratio * 1.3))
+            draw.line((0, y, width, y), fill=(10, 8, 20, alpha))
+        _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
+        box_center_y = int(height * 0.74) if variant == "context_photo_bottom" else int(height * 0.22)
+        draw.multiline_text((width // 2, box_center_y), body, font=body_font,
+                            fill=(255, 255, 255, 255), anchor="mm", align="center", spacing=14)
+    elif variant == "hook_top":
+        _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
+        draw.rounded_rectangle((margin, 280, width - margin, int(height * 0.63)), radius=38,
+                               fill=(255, 255, 255, 244))
+        draw.rectangle((margin, 280, margin + 10, int(height * 0.63)), fill=(255, 112, 32, 255))
+        draw.multiline_text((margin + 56, 390), body, font=body_font,
+                            fill=(28, 16, 32, 255), align="left", spacing=14)
+    elif variant == "badge_quote":
+        _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
+        quote_mark_font = ImageFont.truetype(str(font_path), max(80, width // 6)) if font_path.exists() else label_font
+        draw.text((width // 2, int(height * 0.30)), "“", font=quote_mark_font,
+                  fill=(255, 255, 255, 60), anchor="mm")
+        draw.multiline_text((width // 2, height // 2), body, font=body_font,
+                            fill=(255, 255, 255, 255), anchor="mm", align="center", spacing=16)
+        draw.ellipse((width // 2 - 5, int(height * 0.58), width // 2 + 5, int(height * 0.58) + 10),
+                     fill=(255, 112, 32, 255))
+    elif variant == "split_block":
+        split_y = int(height * 0.40)
+        draw.rectangle((0, 0, width, split_y), fill=(12, 9, 24, 255))
+        draw.rectangle((0, split_y, width, split_y + 10), fill=(255, 112, 32, 255))
+        _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
+        draw.multiline_text((width // 2, (split_y + height) // 2 - 60), body, font=body_font,
+                            fill=(255, 255, 255, 255), anchor="mm", align="center", spacing=14)
+    else:  # clean_center (padrao)
+        _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
+        draw.rounded_rectangle((margin, 250, width - margin, height - 270), radius=38,
+                               fill=(12, 9, 24, 238), outline=(255, 255, 255, 230), width=3)
+        draw.multiline_text((width // 2, height // 2), body, font=body_font,
+                            fill=(255, 255, 255, 255), anchor="mm", align="center", spacing=14)
+
+    _cta_bar(draw, width, height, margin, footer_font)
     image.save(out_path, format="PNG", optimize=True)
+
+
+def _choose_video_variant(db: Session, settings: Settings, existing: VideoAsset | None,
+                          force: bool, requested: str | None = None) -> str:
+    requested = requested or getattr(settings, "video_creative_variant", "auto")
+    if requested != "auto":
+        if requested not in VIDEO_CREATIVE_SPECS:
+            raise VideoSearchError(f"variante visual de video invalida: {requested}")
+        return requested
+    keys = tuple(VIDEO_CREATIVE_SPECS)
+    if existing and force:
+        previous = (existing.metadata_json or {}).get("creative_variant")
+        if previous in keys:
+            return keys[(keys.index(previous) + 1) % len(keys)]
+    total = db.scalar(select(func.count()).select_from(VideoAsset)) or 0
+    return keys[int(total) % len(keys)]
+
+
+def _choose_video_transition(db: Session, settings: Settings, existing: VideoAsset | None,
+                             force: bool, requested: str | None = None) -> str:
+    """Mesma lógica de rodízio de _choose_video_variant, aplicada ao fator transição."""
+    requested = requested or getattr(settings, "video_transition", "auto")
+    if requested != "auto":
+        if requested not in VIDEO_TRANSITIONS:
+            raise VideoSearchError(f"transição de vídeo inválida: {requested}; use uma de {VIDEO_TRANSITIONS}")
+        return requested
+    keys = VIDEO_TRANSITIONS
+    if existing and force:
+        previous = (existing.metadata_json or {}).get("transition")
+        if previous in keys:
+            return keys[(keys.index(previous) + 1) % len(keys)]
+    total = db.scalar(select(func.count()).select_from(VideoAsset)) or 0
+    return keys[int(total) % len(keys)]
 
 
 def _candidate(raw: dict[str, Any], query: str, provider: str = "pixabay") -> VideoCandidate | None:
@@ -569,15 +786,18 @@ def _normalize_video_source(source: Path, out: Path, settings: Settings,
 def _render_xfade_pair(first: Path, second: Path, out: Path, settings: Settings,
                        transition_duration: float, offset: float,
                        final: bool, rows: list[dict[str, Any]] | None,
-                       duration_seconds: float, audio: Path | None) -> None:
+                       duration_seconds: float, audio: Path | None,
+                       transition: str = "fade") -> None:
     """Aplica uma transicao entre apenas dois videos."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise VideoSearchError("ffmpeg nao instalado; use a imagem Docker do projeto ou instale ffmpeg")
+    if transition not in VIDEO_TRANSITIONS:
+        transition = "fade"
     filters = [
         "[0:v:0]setpts=PTS-STARTPTS,fps=30,format=yuv420p,settb=AVTB,setsar=1[first]",
         "[1:v:0]setpts=PTS-STARTPTS,fps=30,format=yuv420p,settb=AVTB,setsar=1[second]",
-        (f"[first][second]xfade=transition=fade:duration={transition_duration:.3f}:"
+        (f"[first][second]xfade=transition={transition}:duration={transition_duration:.3f}:"
          f"offset={offset:.3f}[mixed]"),
     ]
     output_label = "[mixed]"
@@ -622,7 +842,7 @@ def _render_xfade_pair(first: Path, second: Path, out: Path, settings: Settings,
 
 def _render_video_sources_progressive(sources: list[Path], rows: list[dict[str, Any]],
                                       settings: Settings, out: Path, duration_seconds: float,
-                                      audio: Path | None = None) -> None:
+                                      audio: Path | None = None, transition: str = "fade") -> None:
     transition_duration = min(0.35, duration_seconds / (len(sources) * 3))
     # Compensa o overlap do xfade para preservar a duracao total do reel.
     segment_duration = (duration_seconds + (len(sources) - 1) * transition_duration) / len(sources)
@@ -639,7 +859,7 @@ def _render_video_sources_progressive(sources: list[Path], rows: list[dict[str, 
             current, next_source, next_output, settings, transition_duration,
             current_duration - transition_duration, final, rows,
             duration_seconds if final else current_duration + segment_duration - transition_duration,
-            audio if final else None,
+            audio if final else None, transition=transition,
         )
         if current != out:
             current.unlink(missing_ok=True)
@@ -649,12 +869,14 @@ def _render_video_sources_progressive(sources: list[Path], rows: list[dict[str, 
 
 
 def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], settings: Settings,
-                          out: Path, duration_seconds: float, audio: Path | None = None) -> None:
+                          out: Path, duration_seconds: float, audio: Path | None = None,
+                          transition: str = "fade") -> None:
     """Renderiza vários placeholders com transições e pico menor de memória."""
     if len(sources) <= 1:
         render_video(sources[0], rows, settings, out, duration_seconds, audio=audio)
         return
-    _render_video_sources_progressive(sources, rows, settings, out, duration_seconds, audio=audio)
+    _render_video_sources_progressive(sources, rows, settings, out, duration_seconds, audio=audio,
+                                      transition=transition)
     return
 def _upload_to_cloudinary(source: bytes | Path, asset_key: str, settings: Settings) -> str:
     if not settings.cloudinary_configured:
@@ -690,7 +912,17 @@ def _upload_to_cloudinary(source: bytes | Path, asset_key: str, settings: Settin
 
 
 def create_video(db: Session, theme: str, trend_term: str, query: str, settings: Settings | None = None,
-                 client: httpx.Client | None = None, render: bool = True, force: bool = False) -> VideoAsset:
+                 client: httpx.Client | None = None, render: bool = True, force: bool = False,
+                 variant: str | None = None, transition: str | None = None,
+                 duration_seconds: float | None = None, generated_image_count: int | None = None) -> VideoAsset:
+    """Gera (e opcionalmente renderiza) um reel.
+
+    variant/transition/duration_seconds/generated_image_count são os níveis dos
+    fatores testáveis de retenção: quando None, cada um roda em rodízio automático
+    (igual ao sistema de experimentos de foto); quando informado, fixa o nível —
+    é o que um experimento passa pra garantir que cada publicação do bloco use o
+    nível exato que está sendo comparado.
+    """
     s = settings or get_settings()
     candidates = search_videos(query, s, client)
     if not candidates:
@@ -699,6 +931,8 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
     candidate = selected[0]
     existing = db.scalar(select(VideoAsset).where(VideoAsset.provider == candidate.provider,
                                                    VideoAsset.provider_id == candidate.provider_id))
+    chosen_variant = _choose_video_variant(db, s, existing, force, requested=variant)
+    chosen_transition = _choose_video_transition(db, s, existing, force, requested=transition)
     # O fluxo automático continua idempotente; o teste manual pode re-renderizar
     # o mesmo vídeo de stock explicitamente com force=True.
     if existing and not force and (existing.video_url or not render):
@@ -742,10 +976,25 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
             raise VideoSearchError("nenhum vídeo placeholder foi baixado")
         digest = hashlib.sha256("".join(digests).encode()).hexdigest()
         generated_texts = script_texts[1:-1]
-        generated_count = min(s.video_generated_image_count, len(generated_texts))
+        requested_count = generated_image_count if generated_image_count is not None \
+            else s.video_generated_image_count
+        generated_count = min(max(0, requested_count), len(generated_texts))
+        spec = VIDEO_CREATIVE_SPECS[chosen_variant]
+        context_frame: Path | None = None
+        if spec["has_context_image"] and generated_count:
+            # um frame só, reaproveitado em todos os cartões gerados deste asset —
+            # 1 chamada ao ffmpeg em vez de uma por cartão.
+            context_frame = root / "context-frame.jpg"
+            try:
+                _extract_context_frame(source_items[0]["path"], context_frame, s)
+            except VideoSearchError:
+                logger.warning("falha ao extrair frame de contexto; variante %s cai para fundo solido",
+                               chosen_variant)
+                context_frame = None
         for index in range(generated_count):
             generated = root / f"generated-{index}.png"
-            _generate_video_image(theme, trend_term, generated_texts[index], generated, s, index)
+            _generate_video_image(theme, trend_term, generated_texts[index], generated, s, index,
+                                  variant=chosen_variant, background_path=context_frame)
             insertion = min(len(source_items), 1 + index * 2)
             source_items.insert(insertion, {
                 "path": generated,
@@ -757,12 +1006,17 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
             })
             digests.append(_sha256_file(generated))
         sources = [item["path"] for item in source_items]
+        requested_duration = float(duration_seconds) if duration_seconds is not None \
+            else float(s.video_duration_seconds)
         if render:
             out = root / "output.mp4"
             audio_path: Path | None = None
-            # duração alvo parte do valor configurado; se o TTS rodar, passa a ser a
-            # duração real da fala, pra legenda e narração ficarem sincronizadas.
-            duration_seconds: float = float(s.video_duration_seconds)
+            # duração alvo parte do nível pedido (ou do padrão configurado); se o TTS
+            # rodar, a narração passa a comandar a duração — exceto quando um nível
+            # explícito foi pedido por um experimento, caso em que o render corta
+            # vídeo e áudio em requested_duration (o -t do ffmpeg já faz esse corte),
+            # mesmo que a fala natural fosse mais longa.
+            final_duration: float = requested_duration
             if s.video_tts_enabled:
                 audio_path = root / "narration.mp3"
                 try:
@@ -770,14 +1024,17 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
                     elevenlabs_narration = _elevenlabs_narration_prompt(script_texts, s)
                     _tts_narration(narration, s, audio_path, s.video_timeout_seconds,
                                    elevenlabs_text=elevenlabs_narration)
-                    duration_seconds = _probe_duration(audio_path, s.video_timeout_seconds)
+                    measured = _probe_duration(audio_path, s.video_timeout_seconds)
+                    final_duration = requested_duration if duration_seconds is not None else measured
                 except VideoSearchError as e:
                     raise VideoSearchError(f"TTS falhou para {theme}/{trend_term}: {e}") from e
+            duration_seconds = final_duration
             _, rows = subtitle_plan(theme, trend_term, duration_seconds)
-            _render_video_sources(sources, rows, s, out, duration_seconds, audio=audio_path)
+            _render_video_sources(sources, rows, s, out, duration_seconds, audio=audio_path,
+                                  transition=chosen_transition)
             video_url = _upload_to_cloudinary(out, f"{theme}-{candidate.provider_id}-{uuid4().hex}", s)
         else:
-            duration_seconds = float(s.video_duration_seconds)
+            duration_seconds = requested_duration
             _, rows = subtitle_plan(theme, trend_term, duration_seconds)
         segment_span = duration_seconds / len(source_items)
         segments = [
@@ -790,7 +1047,7 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
                 "text": item.get("text"),
                 "start_seconds": round(index * segment_span, 2),
                 "end_seconds": round((index + 1) * segment_span, 2),
-                "transition_in": "fade" if index else "start",
+                "transition_in": chosen_transition if index else "start",
             }
             for index, item in enumerate(source_items)
         ]
@@ -799,7 +1056,10 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
             "texts": rows,
             "sha256": digest,
             "segments": segments,
-            "transition": "xfade-fade",
+            "creative_variant": chosen_variant,
+            "duration_seconds": round(duration_seconds, 2),
+            "duration_requested": round(requested_duration, 2),
+            "transition": chosen_transition,
             "generated_image_count": generated_count,
         }
     if existing:
@@ -839,5 +1099,9 @@ def public(asset: VideoAsset, base_url: str = "") -> dict[str, Any]:
             "landing_url": asset.landing_url, "trend_term": asset.trend_term, "theme_key": asset.theme_key,
             "hook": asset.hook, "subtitle_text": asset.subtitle_text,
             "segments": (asset.metadata_json or {}).get("segments", []),
+            "creative_variant": (asset.metadata_json or {}).get("creative_variant"),
+            "transition": (asset.metadata_json or {}).get("transition"),
+            "duration_seconds": (asset.metadata_json or {}).get("duration_seconds"),
+            "generated_image_count": (asset.metadata_json or {}).get("generated_image_count"),
             "rendered": bool(asset.video_url or asset.mp4_bytes),
             "video_url": asset.video_url or f"{base_url}/api/videos/{asset.id}/file"}

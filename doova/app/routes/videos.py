@@ -15,7 +15,8 @@ from app.models import VideoAsset
 from app.routes.deps import http_client
 from app.security import AdminDep, GenerationLimit
 from app.services.trend_content import TREND_THEMES, match_theme
-from app.services.video_service import VideoSearchError, create_video, public, search_videos
+from app.services.video_service import (VIDEO_CREATIVE_SPECS, VIDEO_TRANSITIONS, VideoSearchError,
+                                        create_video, public, search_videos)
 
 router = APIRouter(prefix="/api", dependencies=[AdminDep])
 
@@ -25,6 +26,12 @@ class VideoTrendRequest(BaseModel):
     theme_key: str | None = Field(default=None, max_length=80)
     render: bool = True
     force: bool = False
+    # Níveis explícitos dos fatores testáveis; None = rodízio automático (ver VIDEO_FACTORS
+    # em app/services/video_service.py). É assim que um experimento fixa o nível do bloco.
+    variant: str | None = Field(default=None, max_length=40)
+    transition: str | None = Field(default=None, max_length=20)
+    duration_seconds: float | None = Field(default=None, ge=5, le=60)
+    generated_image_count: int | None = Field(default=None, ge=0, le=4)
 
 
 class VideoCheckRequest(BaseModel):
@@ -82,12 +89,34 @@ def check_video_from_trend(req: VideoCheckRequest):
 def video_from_trend(req: VideoTrendRequest, db: Session = Depends(get_db)):
     theme = _theme(req)
     settings = get_settings()
+    if req.variant and req.variant not in VIDEO_CREATIVE_SPECS:
+        raise HTTPException(422, f"variante inválida: {req.variant}; use uma de {sorted(VIDEO_CREATIVE_SPECS)}")
+    if req.transition and req.transition not in VIDEO_TRANSITIONS:
+        raise HTTPException(422, f"transição inválida: {req.transition}; use uma de {VIDEO_TRANSITIONS}")
     try:
         asset = create_video(db, theme, req.trend_term, req.trend_term, settings,
-                             client=http_client(), render=req.render, force=req.force)
+                             client=http_client(), render=req.render, force=req.force,
+                             variant=req.variant, transition=req.transition,
+                             duration_seconds=req.duration_seconds,
+                             generated_image_count=req.generated_image_count)
     except VideoSearchError as e:
         raise HTTPException(502, str(e))
     return public(asset)
+
+
+@router.get("/videos/factors", tags=["vídeos"],
+           summary="Listar variantes, transições e faixas válidas para testar retenção")
+def video_factors():
+    from app.services.video_service import VIDEO_FACTORS
+    return {"factors": {
+        "video_variant": {"allowed": sorted(VIDEO_CREATIVE_SPECS),
+                          "descriptions": {k: v["name"] for k, v in VIDEO_CREATIVE_SPECS.items()}},
+        "video_transition": {"allowed": list(VIDEO_TRANSITIONS)},
+        "video_duration_seconds": {"min": VIDEO_FACTORS["video_duration_seconds"]["min"],
+                                   "max": VIDEO_FACTORS["video_duration_seconds"]["max"]},
+        "video_generated_image_count": {"min": VIDEO_FACTORS["video_generated_image_count"]["min"],
+                                        "max": VIDEO_FACTORS["video_generated_image_count"]["max"]},
+    }}
 
 
 @router.get("/videos", tags=["vídeos"], summary="Listar placeholders de vídeo gerados")

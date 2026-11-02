@@ -144,6 +144,10 @@ class Settings(BaseSettings):
     video_karaoke_inactive_color: str = "&H00FFFFFF"
     video_segment_count: int = Field(default=2, ge=1, le=6)
     video_generated_image_count: int = Field(default=1, ge=0, le=4)
+    video_creative_variant: Literal["auto", "clean_center", "context_photo_bottom", "hook_top",
+                                     "photo_scrim_top", "badge_quote", "split_block"] = "auto"
+    # Nome do filtro xfade do ffmpeg; "auto" roda em rodízio pelas 4 opções de VIDEO_TRANSITIONS.
+    video_transition: Literal["auto", "fade", "wipeleft", "circleopen", "slideup"] = "auto"
     # Downloads grandes são altos demais pra instâncias com 512MB de RAM (o ffmpeg
     # decodificando o vídeo soma várias vezes esse tamanho em memória); 12MB cobre os vídeos
     # curtos (até ~30s) que o VIDEO_CANDIDATE_MAX_WIDTH already limita.
