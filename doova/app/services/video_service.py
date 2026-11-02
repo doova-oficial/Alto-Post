@@ -534,74 +534,118 @@ def _ffmpeg_loop_input(path: Path) -> list[str]:
     return ["-stream_loop", "-1", "-i", str(path)]
 
 
-def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], settings: Settings,
-                          out: Path, duration_seconds: float, audio: Path | None = None) -> None:
-    """Renderiza varios placeholders em sequência, com cortes secos entre eles."""
-    if len(sources) <= 1:
-        render_video(sources[0], rows, settings, out, duration_seconds, audio=audio)
-        return
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise VideoSearchError("ffmpeg nao instalado; use a imagem Docker do projeto ou instale ffmpeg")
-    work_dir = sources[0].parent
-    subs = work_dir / "captions.srt"
-    subs.write_text(_srt(rows), encoding="utf-8")
-    font = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "Inter-Bold.otf"
-    font_name = font.stem if font.exists() else "Arial"
-    if settings.video_karaoke_enabled:
-        ass = work_dir / "captions.ass"
-        ass.write_text(_ass(rows, settings, font_name), encoding="utf-8")
-        subtitle_path = ass.as_posix().replace(":", "\\:")
-        subtitle_filter = f"subtitles={subtitle_path}"
-    else:
-        subtitle_path = subs.as_posix().replace(":", "\\:")
-        subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName={font_name},FontSize={settings.video_font_size},Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=0,Alignment=2,MarginV=180'"
-    base_scale = (f"scale={settings.video_width}:{settings.video_height}:"
-                  f"force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height}"
-                  )
-    segment_duration = duration_seconds / len(sources)
-    filters: list[str] = []
-    labels: list[str] = []
-    for index in range(len(sources)):
-        label = f"v{index}"
-        labels.append(f"[{label}]")
-        # xfade exige CFR e timebase idênticos. Em FFmpeg 7.x, setpts precisa
-        # vir antes de fps; depois normalizamos formato, timebase e SAR.
-        filters.append(f"[{index}:v:0]{base_scale},trim=duration={segment_duration:.3f},"
-                       f"setpts=PTS-STARTPTS,fps=30,format=yuv420p,settb=AVTB,setsar=1[{label}]")
-    transition_duration = min(0.35, segment_duration / 3)
-    current_label = labels[0]
-    current_duration = segment_duration
-    for index in range(1, len(sources)):
-        next_label = labels[index]
-        output_label = f"[x{index}]"
-        offset = current_duration - transition_duration
-        filters.append(
-            f"{current_label}{next_label}xfade=transition=fade:duration={transition_duration:.3f}:"
-            f"offset={offset:.3f}{output_label}"
-        )
-        current_label = output_label
-        current_duration += segment_duration - transition_duration
-    filters.append(f"{current_label}{subtitle_filter}[vout]")
-    cmd = [ffmpeg, "-y", "-filter_complex_threads", "1"]
-    for source in sources:
-        cmd.extend(_ffmpeg_loop_input(source))
-    if audio is not None:
-        cmd.extend(["-i", str(audio)])
-    cmd.extend(["-t", str(duration_seconds), "-filter_complex", ";".join(filters),
-                "-map", "[vout]"])
-    if audio is not None:
-        cmd.extend(["-map", f"{len(sources)}:a:0", "-c:a", "aac", "-b:a", "128k"])
-    else:
-        cmd.append("-an")
-    cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-bf", "0", "-threads", "1",
-                "-filter_threads", "1",
-                "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)])
+def _run_ffmpeg(cmd: list[str], out: Path, settings: Settings) -> None:
     result = subprocess.run(cmd, capture_output=True, timeout=settings.video_timeout_seconds + 60)
-    if result.returncode != 0 or not out.exists():
+    if result.returncode != 0 or not out.exists() or out.stat().st_size == 0:
         raise VideoSearchError(f"ffmpeg falhou: {result.stderr.decode(errors='replace')[-2000:]}")
 
 
+def _normalize_video_source(source: Path, out: Path, settings: Settings,
+                            duration_seconds: float) -> None:
+    """Normaliza uma fonte por vez sem reduzir a resolucao final."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise VideoSearchError("ffmpeg nao instalado; use a imagem Docker do projeto ou instale ffmpeg")
+    scale_filter = (f"scale={settings.video_width}:{settings.video_height}:"
+                    f"force_original_aspect_ratio=increase,crop={settings.video_width}:{settings.video_height},"
+                    "fps=30,format=yuv420p,settb=AVTB,setsar=1")
+    cmd = [ffmpeg, "-y", "-filter_threads", "1", *_ffmpeg_loop_input(source),
+           "-t", f"{duration_seconds:.3f}", "-vf", scale_filter, "-an",
+           "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-bf", "0",
+           "-threads", "1", "-pix_fmt", "yuv420p", str(out)]
+    _run_ffmpeg(cmd, out, settings)
+
+
+def _render_xfade_pair(first: Path, second: Path, out: Path, settings: Settings,
+                       transition_duration: float, offset: float,
+                       final: bool, rows: list[dict[str, Any]] | None,
+                       duration_seconds: float, audio: Path | None) -> None:
+    """Aplica uma transicao entre apenas dois videos."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise VideoSearchError("ffmpeg nao instalado; use a imagem Docker do projeto ou instale ffmpeg")
+    filters = [
+        "[0:v:0]setpts=PTS-STARTPTS,fps=30,format=yuv420p,settb=AVTB,setsar=1[first]",
+        "[1:v:0]setpts=PTS-STARTPTS,fps=30,format=yuv420p,settb=AVTB,setsar=1[second]",
+        (f"[first][second]xfade=transition=fade:duration={transition_duration:.3f}:"
+         f"offset={offset:.3f}[mixed]"),
+    ]
+    output_label = "[mixed]"
+    if final:
+        if rows is None:
+            raise VideoSearchError("legendas ausentes no render final")
+        work_dir = out.parent
+        subs = work_dir / "captions.srt"
+        subs.write_text(_srt(rows), encoding="utf-8")
+        font = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "Inter-Bold.otf"
+        font_name = font.stem if font.exists() else "Arial"
+        if settings.video_karaoke_enabled:
+            ass = work_dir / "captions.ass"
+            ass.write_text(_ass(rows, settings, font_name), encoding="utf-8")
+            subtitle_path = ass.as_posix().replace(":", "\\:")
+            subtitle_filter = f"subtitles={subtitle_path}"
+        else:
+            subtitle_path = subs.as_posix().replace(":", "\\:")
+            subtitle_filter = (f"subtitles={subtitle_path}:force_style='FontName={font_name},"
+                               f"FontSize={settings.video_font_size},Bold=1,"
+                               "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+                               "BorderStyle=1,Outline=3,Shadow=0,Alignment=2,MarginV=180'")
+        filters.append(f"[mixed]{subtitle_filter}[vout]")
+        output_label = "[vout]"
+
+    cmd = [ffmpeg, "-y", "-filter_complex_threads", "1", "-i", str(first), "-i", str(second)]
+    if audio is not None:
+        cmd.extend(["-i", str(audio)])
+    cmd.extend(["-t", f"{duration_seconds:.3f}", "-filter_complex", ";".join(filters),
+                "-map", output_label])
+    if audio is not None:
+        cmd.extend(["-map", "2:a:0", "-c:a", "aac", "-b:a", "128k"])
+    else:
+        cmd.append("-an")
+    cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-bf", "0",
+                "-threads", "1", "-filter_threads", "1", "-pix_fmt", "yuv420p"])
+    if final:
+        cmd.extend(["-movflags", "+faststart"])
+    cmd.append(str(out))
+    _run_ffmpeg(cmd, out, settings)
+
+
+def _render_video_sources_progressive(sources: list[Path], rows: list[dict[str, Any]],
+                                      settings: Settings, out: Path, duration_seconds: float,
+                                      audio: Path | None = None) -> None:
+    transition_duration = min(0.35, duration_seconds / (len(sources) * 3))
+    # Compensa o overlap do xfade para preservar a duracao total do reel.
+    segment_duration = (duration_seconds + (len(sources) - 1) * transition_duration) / len(sources)
+    work_dir = sources[0].parent
+    current = work_dir / "__doova-normalized-0.mp4"
+    _normalize_video_source(sources[0], current, settings, segment_duration)
+    current_duration = segment_duration
+    for index, source in enumerate(sources[1:], start=1):
+        next_source = work_dir / f"__doova-normalized-{index}.mp4"
+        _normalize_video_source(source, next_source, settings, segment_duration)
+        final = index == len(sources) - 1
+        next_output = out if final else work_dir / f"__doova-xfade-{index}.mp4"
+        _render_xfade_pair(
+            current, next_source, next_output, settings, transition_duration,
+            current_duration - transition_duration, final, rows,
+            duration_seconds if final else current_duration + segment_duration - transition_duration,
+            audio if final else None,
+        )
+        if current != out:
+            current.unlink(missing_ok=True)
+        next_source.unlink(missing_ok=True)
+        current = next_output
+        current_duration += segment_duration - transition_duration
+
+
+def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], settings: Settings,
+                          out: Path, duration_seconds: float, audio: Path | None = None) -> None:
+    """Renderiza vários placeholders com transições e pico menor de memória."""
+    if len(sources) <= 1:
+        render_video(sources[0], rows, settings, out, duration_seconds, audio=audio)
+        return
+    _render_video_sources_progressive(sources, rows, settings, out, duration_seconds, audio=audio)
+    return
 def _upload_to_cloudinary(source: bytes | Path, asset_key: str, settings: Settings) -> str:
     if not settings.cloudinary_configured:
         raise VideoSearchError(

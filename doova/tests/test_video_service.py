@@ -289,10 +289,10 @@ def test_render_video_sources_builds_cuts_between_placeholders(monkeypatch, tmp_
     sources = [tmp_path / "source-0.mp4", tmp_path / "source-1.mp4"]
     for source in sources:
         source.write_bytes(b"fake")
-    calls: dict[str, object] = {}
+    calls: list[list[str]] = []
 
     def fake_run(cmd, **kwargs):
-        calls["cmd"] = cmd
+        calls.append(cmd)
         Path(cmd[-1]).write_bytes(b"fake output")
         return types.SimpleNamespace(returncode=0, stderr=b"")
 
@@ -310,15 +310,52 @@ def test_render_video_sources_builds_cuts_between_placeholders(monkeypatch, tmp_
         4,
     )
 
-    command = calls["cmd"]
+    assert len(calls) == 3  # duas normalizações + uma transição final
+    command = calls[-1]
     filter_graph = command[command.index("-filter_complex") + 1]
     assert "xfade=transition=fade" in filter_graph
     assert "duration=0.350" in filter_graph
     assert "setpts=PTS-STARTPTS,fps=30,format=yuv420p,settb=AVTB,setsar=1" in filter_graph
     assert command[command.index("-filter_complex_threads") + 1] == "1"
     assert command[command.index("-threads") + 1] == "1"
-    assert any(str(item).endswith("source-0.mp4") for item in command)
-    assert any(str(item).endswith("source-1.mp4") for item in command)
+    assert any(str(item).endswith("__doova-normalized-0.mp4") for item in command)
+    assert any(str(item).endswith("__doova-normalized-1.mp4") for item in command)
+    assert sum(item == "-i" for item in command) == 2
+    assert output.read_bytes() == b"fake output"
+
+
+def test_render_video_sources_keeps_two_inputs_per_transition(monkeypatch, tmp_path):
+    from app.config import get_settings
+    from app.services import video_service
+
+    sources = [tmp_path / f"source-{index}.mp4" for index in range(3)]
+    for source in sources:
+        source.write_bytes(b"fake")
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        Path(cmd[-1]).write_bytes(b"fake output")
+        return types.SimpleNamespace(returncode=0, stderr=b"")
+
+    from pathlib import Path
+
+    monkeypatch.setattr(video_service.shutil, "which", lambda _: "ffmpeg")
+    monkeypatch.setattr(video_service.subprocess, "run", fake_run)
+    output = tmp_path / "output.mp4"
+
+    video_service._render_video_sources(
+        sources,
+        [{"start": 0, "end": 4, "text": "Chuva chegou"}],
+        get_settings(),
+        output,
+        6,
+    )
+
+    assert len(calls) == 5  # três normalizações + duas transições
+    transition_commands = [cmd for cmd in calls if "-filter_complex" in cmd]
+    assert len(transition_commands) == 2
+    assert all(sum(item == "-i" for item in cmd) == 2 for cmd in transition_commands)
     assert output.read_bytes() == b"fake output"
 
 
