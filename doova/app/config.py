@@ -119,7 +119,17 @@ class Settings(BaseSettings):
     image_reuse_days: int = Field(default=60, ge=0)  # não repete a mesma foto nesse período
     contact_email: str | None = None  # vai no User-Agent das buscas (boa prática com APIs abertas)
 
-    # ------------------------------------------- assuntos do momento (automático)
+    # -------------------------------------------------------------- vÃ­deos
+    video_enabled: bool = True
+    video_provider: Literal["pixabay"] = "pixabay"
+    video_timeout_seconds: float = Field(default=45.0, gt=0)
+    video_duration_seconds: int = Field(default=12, ge=5, le=60)
+    video_width: int = Field(default=1080, ge=480, le=2160)
+    video_height: int = Field(default=1920, ge=640, le=3840)
+    video_font_size: int = Field(default=64, ge=24, le=140)
+    video_max_download_bytes: int = Field(default=80 * 1024 * 1024, ge=1_000_000)
+
+    # ------------------------------------------- assuntos do momento (automÃ¡tico)
     trend_auto_enabled: bool = True
     trend_auto_interval_hours: int = Field(default=6, ge=1)
     trend_auto_max_per_day: int = Field(default=1, ge=1, le=5)

@@ -169,6 +169,33 @@ class StockPhoto(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class VideoAsset(Base):
+    """Vídeo ilustrativo baixado de um banco gratuito e renderizado com texto."""
+
+    __tablename__ = "video_assets"
+    __table_args__ = (UniqueConstraint("provider", "provider_id", name="uq_video_asset_provider"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("vid"))
+    provider: Mapped[str] = mapped_column(String(20))
+    provider_id: Mapped[str] = mapped_column(String(120))
+    query: Mapped[str] = mapped_column(String(200), default="")
+    title: Mapped[str] = mapped_column(String(300), default="")
+    creator: Mapped[str] = mapped_column(String(200), default="")
+    source: Mapped[str] = mapped_column(String(80), default="")
+    license: Mapped[str] = mapped_column(String(40), default="pixabay")
+    landing_url: Mapped[str] = mapped_column(String(500), default="")
+    download_url: Mapped[str] = mapped_column(String(800), default="")
+    width: Mapped[int] = mapped_column(Integer, default=0)
+    height: Mapped[int] = mapped_column(Integer, default=0)
+    duration_seconds: Mapped[float] = mapped_column(Float, default=0)
+    mp4_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    subtitle_text: Mapped[str] = mapped_column(Text, default="")
+    hook: Mapped[str] = mapped_column(String(300), default="")
+    trend_term: Mapped[str] = mapped_column(String(200), default="")
+    theme_key: Mapped[str] = mapped_column(String(80), default="")
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Post(Base):
     __tablename__ = "posts"
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("post"))

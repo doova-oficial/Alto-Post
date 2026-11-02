@@ -84,6 +84,9 @@ def create_app() -> FastAPI:
     from app.routes import photos
 
     app.include_router(photos.router)
+    from app.routes import videos
+
+    app.include_router(videos.router)
     return app
 
 
