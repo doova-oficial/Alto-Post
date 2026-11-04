@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 FEED_METRICS = ["reach", "views", "likes", "comments", "shares", "saved", "total_interactions",
                 "profile_visits", "profile_activity", "follows"]
 
+# Reels têm duas métricas de retenção que posts de feed não têm: tempo médio assistido
+# e tempo total assistido (somado entre todas as contas). As demais são as mesmas de FEED_METRICS.
+# https://developers.facebook.com/docs/instagram-platform/reference/instagram-media/insights/
+REEL_METRICS = FEED_METRICS + ["ig_reels_avg_watch_time", "ig_reels_video_view_total_time"]
+
 
 class MetaError(RuntimeError):
     def __init__(self, message: str, *, status: int | None = None, code: int | None = None,
@@ -168,6 +173,16 @@ class MetaService:
         data = (body.get("data") or [{}])[0]
         return {"quota_usage": data.get("quota_usage"), "quota_total": (data.get("config") or {}).get("quota_total"),
                 "quota_duration": (data.get("config") or {}).get("quota_duration")}
+
+    def delete_media(self, media_id: str) -> bool:
+        """Tenta apagar uma mídia pela Graph API.
+
+        A API do Instagram, na prática, não permite apagar uma mídia já publicada
+        (só contêineres ainda não publicados). Chamamos mesmo assim e deixamos o
+        erro da Meta subir como ``MetaError`` — quem chama decide como tratar.
+        """
+        body = self._request("DELETE", media_id, mutating=True)
+        return bool(body.get("success", True))
 
     def get_media(self, media_id: str) -> dict[str, Any]:
         return self._request("GET", media_id,

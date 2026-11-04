@@ -168,6 +168,16 @@ class VideoSearchError(RuntimeError):
     pass
 
 
+class VideoPublishError(RuntimeError):
+    def __init__(self, message: str, *, status: int = 502):
+        super().__init__(message)
+        self.status = status
+
+
+class VideoDeleteError(RuntimeError):
+    pass
+
+
 @dataclass
 class VideoCandidate:
     provider: str
@@ -970,12 +980,19 @@ def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], setti
     _render_video_sources_progressive(sources, rows, settings, out, duration_seconds, audio=audio,
                                       transition=transition)
     return
-def _upload_to_cloudinary(source: bytes | Path, asset_key: str, settings: Settings) -> str:
+def _upload_to_cloudinary(source: bytes | Path, asset_key: str, settings: Settings) -> tuple[str, str]:
+    """Envia o vídeo renderizado e devolve ``(url, public_id)``.
+
+    O ``public_id`` (com a pasta) é guardado no vídeo para permitir apagar o
+    arquivo do Cloudinary depois, sem precisar reconstruir o nome a partir da URL.
+    """
     if not settings.cloudinary_configured:
         raise VideoSearchError(
             "Cloudinary não configurado: defina CLOUDINARY_CLOUD_NAME, "
             "CLOUDINARY_API_KEY e CLOUDINARY_API_SECRET"
         )
+    folder = "doova/videos"
+    public_id = f"{folder}/{asset_key}"
     try:
         import cloudinary
         from cloudinary.uploader import upload
@@ -990,17 +1007,39 @@ def _upload_to_cloudinary(source: bytes | Path, asset_key: str, settings: Settin
         # direto do disco — não carrega o vídeo inteiro em memória do Python antes de subir.
         payload = str(source) if isinstance(source, Path) else io.BytesIO(source)
         result = upload(
-            payload, resource_type="video", folder="doova/videos",
+            payload, resource_type="video", folder=folder,
             public_id=asset_key, overwrite=False, unique_filename=False,
         )
         url = result.get("secure_url")
         if not url:
             raise VideoSearchError("Cloudinary não retornou a URL do vídeo")
-        return str(url)
+        return str(url), str(result.get("public_id") or public_id)
     except VideoSearchError:
         raise
     except Exception as e:
         raise VideoSearchError(f"upload para o Cloudinary falhou: {type(e).__name__}: {e}") from e
+
+
+def _destroy_cloudinary(public_id: str, settings: Settings) -> None:
+    if not settings.cloudinary_configured:
+        raise VideoSearchError("Cloudinary não configurado")
+    try:
+        import cloudinary
+        from cloudinary.uploader import destroy
+
+        cloudinary.config(
+            cloud_name=settings.cloudinary_cloud_name,
+            api_key=settings.cloudinary_api_key,
+            api_secret=settings.cloudinary_api_secret.get_secret_value(),
+            secure=True,
+        )
+        result = destroy(public_id, resource_type="video", invalidate=True)
+        if result.get("result") not in ("ok", "not found"):
+            raise VideoSearchError(f"Cloudinary recusou apagar {public_id}: {result}")
+    except VideoSearchError:
+        raise
+    except Exception as e:
+        raise VideoSearchError(f"remoção no Cloudinary falhou: {type(e).__name__}: {e}") from e
 
 
 def create_video(db: Session, theme: str, trend_term: str, query: str, settings: Settings | None = None,
@@ -1030,10 +1069,13 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
     if existing and not force and (existing.video_url or not render):
         return existing
     if existing and not force and existing.mp4_bytes:
-        existing.video_url = _upload_to_cloudinary(
+        existing.video_url, legacy_public_id = _upload_to_cloudinary(
             existing.mp4_bytes, f"{theme}-{candidate.provider_id}-legacy-{uuid4().hex}", s
         )
         existing.mp4_bytes = None
+        meta_legacy = dict(existing.metadata_json or {})
+        meta_legacy["cloudinary_public_id"] = legacy_public_id
+        existing.metadata_json = meta_legacy
         db.commit()
         db.refresh(existing)
         return existing
@@ -1137,9 +1179,12 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
             _, rows = subtitle_plan(theme, trend_term, duration_seconds)
             _render_video_sources(sources, rows, s, out, duration_seconds, audio=audio_path,
                                   transition=chosen_transition)
-            video_url = _upload_to_cloudinary(out, f"{theme}-{candidate.provider_id}-{uuid4().hex}", s)
+            video_url, cloudinary_public_id = _upload_to_cloudinary(
+                out, f"{theme}-{candidate.provider_id}-{uuid4().hex}", s
+            )
         else:
             duration_seconds = requested_duration
+            cloudinary_public_id = None
             _, rows = subtitle_plan(theme, trend_term, duration_seconds)
         segment_span = duration_seconds / len(source_items)
         segments = [
@@ -1167,6 +1212,7 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
             "transition": chosen_transition,
             "generated_image_count": generated_count,
             "context_image": context_photo_info or {"provider": "doova", "kind": "brand_placeholder"},
+            "cloudinary_public_id": cloudinary_public_id,
         }
     if existing:
         existing.query = query[:200]
@@ -1197,6 +1243,105 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
                        theme_key=theme[:80], metadata_json=video_metadata)
     db.add(asset); db.commit(); db.refresh(asset)
     return asset
+
+
+def publish_reel(db: Session, asset: VideoAsset, settings: Settings | None = None, meta=None) -> dict[str, Any]:
+    """Publica um Reel já renderizado no Instagram.
+
+    Lógica compartilhada pela rota manual (``POST /api/videos/{id}/publish``) e pelo
+    job automático do agendador — por isso levanta ``VideoPublishError`` em vez de
+    ``HTTPException`` (a rota converte; o job apenas registra o erro). ``meta`` é
+    injetável (mesmo padrão de ``Publisher``), para testar sem chamar a Graph API de verdade.
+    """
+    from app.services.meta_service import MetaError, MetaService
+
+    s = settings or get_settings()
+    metadata = dict(asset.metadata_json or {})
+    if metadata.get("instagram_media_id"):
+        return {"status": "already_published", "media_id": metadata["instagram_media_id"],
+                "permalink": metadata.get("instagram_permalink")}
+    if not asset.video_url:
+        raise VideoPublishError("o Reel ainda não foi renderizado ou enviado ao Cloudinary", status=409)
+    if not s.meta_configured:
+        raise VideoPublishError("configure META_IG_USER_ID e META_ACCESS_TOKEN para publicar Reels", status=503)
+    caption = f"{asset.hook or asset.trend_term}\n\n{asset.trend_term}\n\nEncontre profissionais e serviços no Doova."
+    context = metadata.get("context_image") or {}
+    if context.get("license") == "by":
+        caption += (f"\n\nImagem de apoio: {context.get('title') or 'imagem ilustrativa'}, "
+                    f"por {context.get('creator') or 'autor não informado'}. "
+                    f"Origem: {context.get('landing_url') or 'Openverse'}. Licença CC BY; imagem adaptada.")
+    if s.dry_run:
+        return {"status": "simulated", "message": "DRY_RUN=true: nenhum Reel foi enviado ao Instagram"}
+    meta = meta or MetaService(s)
+    try:
+        container_id = metadata.get("instagram_container_id")
+        if not container_id:
+            container_id = meta.create_reel_container(asset.video_url, caption, share_to_feed=True)
+            metadata["instagram_container_id"] = container_id
+            asset.metadata_json = metadata
+            db.commit()
+        status = meta.wait_container(container_id, interval=s.container_check_interval_seconds)
+        if status.status_code != "FINISHED":
+            raise VideoPublishError(f"Meta ainda não concluiu o processamento do Reel (status: {status.status_code})")
+        media_id = meta.publish_container(container_id)
+        media = meta.get_media(media_id)
+        metadata.update({"instagram_media_id": media_id, "instagram_permalink": media.get("permalink"),
+                         "instagram_published_at": media.get("timestamp")})
+        asset.metadata_json = metadata
+        db.commit()
+        db.refresh(asset)
+        return {"status": "published", "media_id": media_id, "permalink": media.get("permalink")}
+    except MetaError as exc:
+        raise VideoPublishError(f"falha na publicação do Reel: {exc}") from exc
+
+
+def unpublished_rendered_videos(db: Session, limit: int = 20) -> list[VideoAsset]:
+    """Reels renderizados (têm ``video_url``) que ainda não foram publicados no Instagram.
+
+    Usado pelo job automático de publicação — ``instagram_media_id`` só existe em
+    ``metadata_json`` depois de publicado, então filtramos em Python (JSON não é
+    indexável de forma portátil entre SQLite e Postgres aqui).
+    """
+    assets = db.scalars(
+        select(VideoAsset).where(VideoAsset.video_url.is_not(None)).order_by(VideoAsset.created_at)
+    ).all()
+    out = [a for a in assets if not (a.metadata_json or {}).get("instagram_media_id")]
+    return out[:limit]
+
+
+def delete_video(db: Session, asset: VideoAsset, settings: Settings | None = None, force: bool = False) -> dict[str, Any]:
+    """Apaga um vídeo gerado: registro no banco, métricas associadas e arquivo no Cloudinary.
+
+    A Graph API do Instagram não permite apagar uma mídia já publicada (só contêineres
+    que ainda não viraram publicação). Por isso, se o Reel já foi publicado, é preciso
+    ``force=True`` para confirmar: a remoção apaga o registro local e o arquivo no
+    Cloudinary, mas o Reel continua no Instagram até ser apagado por lá manualmente.
+    """
+    from app.models import VideoMetricSnapshot
+
+    s = settings or get_settings()
+    metadata = dict(asset.metadata_json or {})
+    published = bool(metadata.get("instagram_media_id"))
+    if published and not force:
+        raise VideoDeleteError(
+            "este Reel já foi publicado no Instagram e a API não permite apagá-lo de lá; "
+            "use force=true para apagar o registro local e o arquivo no Cloudinary mesmo assim "
+            "(o vídeo continua no Instagram até ser removido por lá manualmente)"
+        )
+    cloudinary_public_id = metadata.get("cloudinary_public_id")
+    cloudinary_deleted = False
+    if cloudinary_public_id and s.cloudinary_configured:
+        try:
+            _destroy_cloudinary(cloudinary_public_id, s)
+            cloudinary_deleted = True
+        except VideoSearchError as e:
+            logger.warning("falha ao apagar vídeo %s do Cloudinary (%s): %s", asset.id, cloudinary_public_id, e)
+    video_id = asset.id
+    db.execute(VideoMetricSnapshot.__table__.delete().where(VideoMetricSnapshot.video_id == video_id))
+    db.delete(asset)
+    db.commit()
+    return {"id": video_id, "deleted": True, "was_published_on_instagram": published,
+            "cloudinary_deleted": cloudinary_deleted}
 
 
 def public(asset: VideoAsset, base_url: str = "") -> dict[str, Any]:

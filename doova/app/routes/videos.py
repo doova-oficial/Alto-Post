@@ -15,9 +15,9 @@ from app.models import VideoAsset
 from app.routes.deps import http_client
 from app.security import AdminDep, GenerationLimit
 from app.services.trend_content import TREND_THEMES, match_theme
-from app.services.video_service import (VIDEO_CREATIVE_SPECS, VIDEO_TRANSITIONS, VideoSearchError,
-                                        create_video, public, search_videos)
-from app.services.meta_service import MetaError, MetaService
+from app.services.video_service import (VIDEO_CREATIVE_SPECS, VIDEO_TRANSITIONS, VideoDeleteError,
+                                        VideoPublishError, VideoSearchError, create_video, delete_video,
+                                        public, publish_reel, search_videos)
 
 router = APIRouter(prefix="/api", dependencies=[AdminDep])
 
@@ -111,45 +111,11 @@ def video_from_trend(req: VideoTrendRequest, db: Session = Depends(get_db)):
 
 
 def _publish_reel(asset: VideoAsset, db: Session, settings=None) -> dict:
-    settings = settings or get_settings()
-    metadata = dict(asset.metadata_json or {})
-    if metadata.get("instagram_media_id"):
-        return {"status": "already_published", "media_id": metadata["instagram_media_id"],
-                "permalink": metadata.get("instagram_permalink")}
-    if not asset.video_url:
-        raise HTTPException(409, "o Reel ainda não foi renderizado ou enviado ao Cloudinary")
-    if not settings.meta_configured:
-        raise HTTPException(503, "configure META_IG_USER_ID e META_ACCESS_TOKEN para publicar Reels")
-    caption = f"{asset.hook or asset.trend_term}\n\n{asset.trend_term}\n\nEncontre profissionais e serviços no Doova."
-    context = metadata.get("context_image") or {}
-    if context.get("license") == "by":
-        caption += (f"\n\nImagem de apoio: {context.get('title') or 'imagem ilustrativa'}, "
-                    f"por {context.get('creator') or 'autor não informado'}. "
-                    f"Origem: {context.get('landing_url') or 'Openverse'}. Licença CC BY; imagem adaptada.")
-    if settings.dry_run:
-        return {"status": "simulated", "message": "DRY_RUN=true: nenhum Reel foi enviado ao Instagram"}
-    meta = MetaService(settings)
+    """Wrapper fino: a lógica real mora em video_service.publish_reel (reaproveitada pelo job automático)."""
     try:
-        container_id = metadata.get("instagram_container_id")
-        if not container_id:
-            container_id = meta.create_reel_container(asset.video_url, caption, share_to_feed=True)
-            metadata["instagram_container_id"] = container_id
-            asset.metadata_json = metadata
-            db.commit()
-        status = meta.wait_container(container_id, interval=settings.container_check_interval_seconds)
-        if status.status_code != "FINISHED":
-            raise HTTPException(502, f"Meta ainda não concluiu o processamento do Reel (status: {status.status_code})")
-        media_id = meta.publish_container(container_id)
-        media = meta.get_media(media_id)
-        metadata.update({"instagram_media_id": media_id,
-                         "instagram_permalink": media.get("permalink"),
-                         "instagram_published_at": media.get("timestamp")})
-        asset.metadata_json = metadata
-        db.commit()
-        db.refresh(asset)
-        return {"status": "published", "media_id": media_id, "permalink": media.get("permalink")}
-    except MetaError as exc:
-        raise HTTPException(502, f"falha na publicação do Reel: {exc}") from exc
+        return publish_reel(db, asset, settings)
+    except VideoPublishError as e:
+        raise HTTPException(e.status, str(e)) from e
 
 
 @router.post("/videos/{video_id}/publish", tags=["vídeos"],
@@ -187,6 +153,17 @@ def video_detail(video_id: str, db: Session = Depends(get_db)):
     if asset is None:
         raise HTTPException(404, "vídeo não encontrado")
     return public(asset)
+
+
+@router.delete("/videos/{video_id}", tags=["vídeos"], summary="Apagar um vídeo gerado (e do Cloudinary, se houver)")
+def delete_video_endpoint(video_id: str, force: bool = False, db: Session = Depends(get_db)):
+    asset = db.get(VideoAsset, video_id)
+    if asset is None:
+        raise HTTPException(404, "vídeo não encontrado")
+    try:
+        return delete_video(db, asset, force=force)
+    except VideoDeleteError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 @router.get("/videos/{video_id}/file", tags=["vídeos"], summary="Baixar o MP4 renderizado")

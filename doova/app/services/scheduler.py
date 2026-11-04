@@ -76,6 +76,46 @@ def job_metrics() -> Any:
         return collect_metrics(db, settings=s)
 
 
+def job_video_publish() -> Any:
+    """Publica Reels renderizados que ainda não foram ao Instagram.
+
+    Espelha o job_publish de imagens: a geração de vídeo já roda sozinha dentro de
+    job_trends_auto (render=True); este job fecha o ciclo publicando o que foi gerado,
+    assim como o publicador de imagens publica o que o content_service aprovou.
+    """
+    s = get_settings()
+    if not s.video_auto_publish:
+        return {"skipped": "VIDEO_AUTO_PUBLISH=false"}
+    if not s.meta_configured:
+        return {"skipped": "Meta não configurada"}
+    from app.services.video_service import VideoPublishError, publish_reel, unpublished_rendered_videos
+
+    with session_scope() as db:
+        if is_paused(db):
+            return {"paused": True}
+        pending = unpublished_rendered_videos(db)
+        published, errors = [], []
+        for asset in pending:
+            try:
+                result = publish_reel(db, asset, s)
+            except VideoPublishError as e:
+                errors.append({"video_id": asset.id, "error": str(e)[:300]})
+                continue
+            if result.get("status") == "published":
+                published.append(asset.id)
+        return {"published": published, "errors": errors, "eligible": len(pending)}
+
+
+def job_video_metrics() -> Any:
+    s = get_settings()
+    if not s.meta_configured:
+        return {"skipped": "Meta não configurada"}
+    from app.services.video_analytics_service import collect_video_metrics
+
+    with session_scope() as db:
+        return collect_video_metrics(db, settings=s)
+
+
 def job_token_refresh() -> Any:
     s = get_settings()
     if not s.meta_configured:
@@ -120,6 +160,8 @@ JOBS: dict[str, tuple[Callable[[], Any], int]] = {
     "backup": (job_backup, 600),
     "trends_auto": (job_trends_auto, 1200),
     "watchdog": (job_watchdog, 600),
+    "video_publish": (job_video_publish, 900),
+    "video_metrics": (job_video_metrics, 1800),
 }
 
 
@@ -137,6 +179,8 @@ def intervals(settings: Settings) -> dict[str, timedelta]:
         "backup": timedelta(days=1),
         "trends_auto": timedelta(hours=settings.trend_auto_interval_hours),
         "watchdog": timedelta(minutes=15),
+        "video_publish": timedelta(seconds=settings.publisher_interval_seconds),
+        "video_metrics": timedelta(hours=settings.metrics_interval_hours),
     }
 
 
@@ -178,6 +222,10 @@ def start_scheduler(settings: Settings | None = None):
     sch.add_job(run_job, "cron", args=["backup"], hour=3, minute=30, id="backup")
     sch.add_job(run_job, "interval", args=["trends_auto"], hours=settings.trend_auto_interval_hours, id="trends_auto")
     sch.add_job(run_job, "interval", args=["watchdog"], minutes=15, id="watchdog")
+    sch.add_job(run_job, "interval", args=["video_publish"],
+               seconds=int(iv["video_publish"].total_seconds()), id="video_publish")
+    sch.add_job(run_job, "interval", args=["video_metrics"],
+               hours=settings.metrics_interval_hours, id="video_metrics")
     sch.start()
     _scheduler = sch
     logger.info("agendador iniciado: %s", [j.id for j in sch.get_jobs()])

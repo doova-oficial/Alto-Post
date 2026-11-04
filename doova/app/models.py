@@ -197,6 +197,30 @@ class VideoAsset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class VideoMetricSnapshot(Base):
+    """Medição de um Reel (VideoAsset) num momento — espelha MetricSnapshot, mas para vídeo."""
+
+    __tablename__ = "video_metric_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    video_id: Mapped[str] = mapped_column(ForeignKey("video_assets.id"), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    age_hours: Mapped[float] = mapped_column(Float)
+    reach: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    views: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    likes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    shares: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    saved: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_interactions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    profile_visits: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    profile_activity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    follows: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    avg_watch_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)  # ig_reels_avg_watch_time
+    total_watch_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)  # ig_reels_video_view_total_time
+    unavailable: Mapped[list] = mapped_column(JSON, default=list)
+    raw: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class Post(Base):
     __tablename__ = "posts"
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("post"))

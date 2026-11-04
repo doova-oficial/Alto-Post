@@ -14,6 +14,7 @@ from app.routes.deps import content_service, get_post_or_404, http_error
 from app.schemas import ExperimentCreate, ExperimentSchedule, OpportunityCreate, post_out
 from app.security import AdminDep, GenerationLimit
 from app.services import analytics_service as an
+from app.services import video_analytics_service as van
 from app.services.content_service import ContentError
 from app.services.experiment_service import ExperimentService
 from app.timeutil import iso_utc, local_to_utc
@@ -63,6 +64,58 @@ def collect(db: Session = Depends(get_db)):
 @router.post("/metrics/reports", tags=["métricas"], summary="Gerar relatórios CSV e JSON")
 def reports(metric: str = "engagement_rate", db: Session = Depends(get_db)):
     return an.write_reports(db, metric=metric)
+
+
+# -------------------------------------------------------- métricas de vídeo (Reels)
+@router.get("/videos/metrics/summary", tags=["vídeos"], summary="Resumo legível dos resultados dos Reels")
+def video_metrics_summary(metric: str = "engagement_rate", db: Session = Depends(get_db)):
+    if metric not in an.RATE_DEFS:
+        raise HTTPException(422, f"métrica inválida; use uma de {sorted(an.RATE_DEFS)}")
+    return van.summary(db, metric=metric)
+
+
+@router.get("/videos/metrics/compare", tags=["vídeos"],
+           summary="Comparar Reels por uma dimensão (transição, duração, tema, horário...)")
+def video_metrics_compare(dimension: str = Query(..., description="ex.: transition, duration_bucket, theme_key"),
+                          metric: str = "engagement_rate", db: Session = Depends(get_db)):
+    if dimension not in van.VIDEO_DIMENSIONS:
+        raise HTTPException(422, f"dimensão inválida; use uma de {sorted(van.VIDEO_DIMENSIONS)}")
+    if metric not in an.RATE_DEFS and metric not in van.VIDEO_COUNT_FIELDS and metric != "watch_through_rate":
+        raise HTTPException(422, "métrica inválida")
+    ds = van.build_video_dataset(db)
+    out = van.compare_video(ds["rows"], dimension, metric)
+    out["limitations"] = van.limitations_for(ds)
+    return out
+
+
+@router.get("/videos/metrics/{video_id}", tags=["vídeos"], summary="Medições de um Reel")
+def video_metrics(video_id: str, db: Session = Depends(get_db)):
+    from app.models import VideoAsset, VideoMetricSnapshot
+
+    asset = db.get(VideoAsset, video_id)
+    if asset is None:
+        raise HTTPException(404, "vídeo não encontrado")
+    snaps = db.scalars(select(VideoMetricSnapshot).where(VideoMetricSnapshot.video_id == asset.id)
+                       .order_by(VideoMetricSnapshot.collected_at)).all()
+    from app.services.video_service import public as video_public
+
+    return {"video": video_public(asset),
+            "snapshots": [{**van.video_snapshot_dict(s), **van.compute_video_rates(van.video_snapshot_dict(s))}
+                          for s in snaps],
+            "rate_definitions": {k: v[2] for k, v in an.RATE_DEFS.items()}}
+
+
+@router.post("/videos/metrics/collect", tags=["vídeos"], summary="Coletar métricas de Reels agora (API da Meta)",
+             dependencies=[GenerationLimit])
+def collect_video_metrics_now(db: Session = Depends(get_db)):
+    if not get_settings().meta_configured:
+        raise HTTPException(409, "Meta não configurada")
+    return van.collect_video_metrics(db)
+
+
+@router.post("/videos/metrics/reports", tags=["vídeos"], summary="Gerar relatórios CSV e JSON dos Reels")
+def video_reports(metric: str = "engagement_rate", db: Session = Depends(get_db)):
+    return van.write_reports(db, metric=metric)
 
 
 # ---------------------------------------------------------- experimentos

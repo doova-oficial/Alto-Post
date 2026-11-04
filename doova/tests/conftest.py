@@ -146,6 +146,14 @@ class FakeMeta:
         self.counter += 1
         return f"cont{self.counter}"
 
+    def create_reel_container(self, video_url, caption, share_to_feed=True):
+        self.calls.append(("create_reel", video_url))
+        if self.create_errors:
+            raise self.create_errors.pop(0)
+        self.last_caption = caption
+        self.counter += 1
+        return f"reelcont{self.counter}"
+
     def _state(self):
         return self.container_states.pop(0) if len(self.container_states) > 1 else self.container_states[0]
 
@@ -170,7 +178,7 @@ class FakeMeta:
         self.calls.append("recent")
         return self.recent
 
-    def media_insights(self, mid):
+    def media_insights(self, mid, metrics=None):
         self.calls.append(("insights", mid))
         return self.insights.get(mid, ({}, ["reach"]))
 
