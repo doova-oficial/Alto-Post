@@ -197,6 +197,21 @@ class VideoAsset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class VideoRenderJob(Base):
+    """Fila de renderização remota de Reels pelo worker Android."""
+
+    __tablename__ = "video_render_jobs"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("vjob"))
+    video_id: Mapped[str] = mapped_column(ForeignKey("video_assets.id"), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class VideoMetricSnapshot(Base):
     """Medição de um Reel (VideoAsset) num momento — espelha MetricSnapshot, mas para vídeo."""
 
@@ -238,6 +253,7 @@ class Post(Base):
     alt_text: Mapped[str] = mapped_column(String(1000), default="")
     verified_opportunity_id: Mapped[int | None] = mapped_column(ForeignKey("verified_opportunities.id"), nullable=True)
     photo_id: Mapped[str | None] = mapped_column(ForeignKey("stock_photos.id"), nullable=True, index=True)
+    video_asset_id: Mapped[str | None] = mapped_column(ForeignKey("video_assets.id"), nullable=True, index=True)
     trend_term: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # assunto do momento
 

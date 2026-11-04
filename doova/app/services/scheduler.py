@@ -15,8 +15,12 @@ import logging
 from datetime import timedelta
 from typing import Any, Callable
 
+from sqlalchemy import select
+
 from app.config import Settings, get_settings
 from app.database import session_scope, utcnow
+from app.models import Post, PostStatus
+from app.services.content_service import set_status
 from app.services.state import acquire_lock, get_state, is_paused, release_lock, set_state
 
 logger = logging.getLogger(__name__)
@@ -79,31 +83,54 @@ def job_metrics() -> Any:
 def job_video_publish() -> Any:
     """Publica Reels renderizados que ainda não foram ao Instagram.
 
-    Espelha o job_publish de imagens: a geração de vídeo já roda sozinha dentro de
-    job_trends_auto (render=True); este job fecha o ciclo publicando o que foi gerado,
-    assim como o publicador de imagens publica o que o content_service aprovou.
+    Espelha o job_publish de imagens: job_trends_auto gera o asset e, no modo Android,
+    o worker externo renderiza o arquivo; este job publica somente Reels prontos e
+    respeita o post aprovado e seu horário agendado.
     """
     s = get_settings()
     if not s.video_auto_publish:
         return {"skipped": "VIDEO_AUTO_PUBLISH=false"}
     if not s.meta_configured:
         return {"skipped": "Meta não configurada"}
-    from app.services.video_service import VideoPublishError, publish_reel, unpublished_rendered_videos
+    from app.services.video_service import (
+        VideoPublishError,
+        publish_reel,
+        sync_linked_post_after_reel,
+        unpublished_rendered_videos,
+    )
 
     with session_scope() as db:
         if is_paused(db):
             return {"paused": True}
         pending = unpublished_rendered_videos(db)
-        published, errors = [], []
+        published, errors, deferred = [], [], []
         for asset in pending:
+            linked_post = db.scalar(select(Post).where(Post.video_asset_id == asset.id))
+            if linked_post is not None:
+                now = utcnow()
+                if (linked_post.status != PostStatus.SCHEDULED.value or not linked_post.scheduled_at
+                        or linked_post.scheduled_at > now):
+                    deferred.append(asset.id)
+                    continue
+                if linked_post.expires_at and linked_post.expires_at <= now:
+                    set_status(db, linked_post, PostStatus.CANCELLED, "assunto do momento expirou antes da publicação")
+                    db.commit()
+                    deferred.append(asset.id)
+                    continue
+                if linked_post.caption is None or not linked_post.caption.is_valid:
+                    errors.append({"video_id": asset.id, "error": "publicação vinculada sem legenda válida"})
+                    continue
             try:
-                result = publish_reel(db, asset, s)
+                result = publish_reel(db, asset, s,
+                                      caption_override=linked_post.caption.text if linked_post else None)
             except VideoPublishError as e:
                 errors.append({"video_id": asset.id, "error": str(e)[:300]})
                 continue
-            if result.get("status") == "published":
+            sync_linked_post_after_reel(db, asset, result)
+            result_status = result.get("status")
+            if result_status in ("published", "already_published"):
                 published.append(asset.id)
-        return {"published": published, "errors": errors, "eligible": len(pending)}
+        return {"published": published, "errors": errors, "deferred": deferred, "eligible": len(pending)}
 
 
 def job_video_metrics() -> Any:

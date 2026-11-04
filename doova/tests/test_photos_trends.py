@@ -189,6 +189,48 @@ def test_trend_run_creates_photo_post_for_review(db, monkeypatch):
     assert again["created"] == [] and again["skipped"]
 
 
+def test_android_trend_does_not_fall_back_to_photo_without_video_provider(db, monkeypatch):
+    from app.services import trend_content as tc
+
+    s = reload_settings(monkeypatch, TREND_USE_GROQ="false", VIDEO_RENDER_MODE="android",
+                        PEXELS_API_KEY="", PIXABAY_API_KEY="")
+    items = [{"term": "Chuva em Iporá", "news": [], "geo": "BR-GO"}]
+
+    result = tc.run_trend_auto(db, s, force=True, client=_transport([]), content=_content(CAP), items=items)
+
+    assert result["created"] == []
+    assert result["report"][0]["decision"] == "adiado"
+    assert "Reel" in result["report"][0]["reason"]
+
+
+def test_android_trend_creates_reel_post_without_searching_for_photo(db, monkeypatch):
+    from app.models import Post, VideoAsset, VideoRenderJob
+    from app.services import trend_content as tc
+
+    s = reload_settings(monkeypatch, TREND_USE_GROQ="false", VIDEO_RENDER_MODE="android",
+                        PEXELS_API_KEY="test-pexels-key")
+    asset = VideoAsset(
+        provider="pexels", provider_id="android-trend-test", query="rain", title="Rain",
+        creator="Creator", source="Pexels", license="Pexels License",
+        landing_url="https://www.pexels.com/video/1/", download_url="https://cdn.example/video.mp4",
+        width=720, height=1280, duration_seconds=10, hook="Vai chover?", trend_term="Chuva em Iporá",
+        theme_key="chuva", metadata_json={"texts": []},
+    )
+    db.add(asset)
+    db.commit()
+    monkeypatch.setattr("app.services.video_service.create_video", lambda *args, **kwargs: asset)
+    items = [{"term": "Chuva em Iporá", "news": [], "geo": "BR-GO"}]
+
+    result = tc.run_trend_auto(db, s, force=True, client=_transport([]), content=_content(CAP), items=items)
+
+    assert result["created"], result["report"]
+    post = db.get(Post, result["created"][0])
+    job = db.query(VideoRenderJob).filter_by(video_id=asset.id).one()
+    assert post.photo_id is None and post.video_asset_id == asset.id
+    assert job.status == "pending"
+    assert result["report"][0]["photo_search"]["skipped"] == "Reel substitui a foto"
+
+
 def test_trend_run_disabled_by_default(db):
     from app.services import trend_content as tc
 

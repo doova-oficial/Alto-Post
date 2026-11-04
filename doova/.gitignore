@@ -9,3 +9,4 @@ generated/
 *.db
 *.db-wal
 *.db-shm
+android-worker/

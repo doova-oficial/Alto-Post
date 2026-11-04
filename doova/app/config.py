@@ -125,6 +125,8 @@ class Settings(BaseSettings):
     cloudinary_api_secret: SecretStr | None = None
     video_enabled: bool = True
     video_auto_publish: bool = False  # publica Reels após renderizar; exige Meta configurada e DRY_RUN=false
+    video_render_mode: Literal["server", "android"] = "server"
+    video_worker_token: SecretStr | None = None
     # Pexels e o provedor principal; Pixabay continua disponivel como fallback.
     video_provider: Literal["pexels", "pixabay"] = "pexels"
     video_pixabay_fallback_enabled: bool = True

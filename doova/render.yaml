@@ -91,6 +91,12 @@ services:
         value: "12582912"
       - key: VIDEO_TTS_PROVIDER
         value: elevenlabs
+      - key: VIDEO_RENDER_MODE
+        value: server
+      - key: VIDEO_WORKER_TOKEN
+        sync: false
+      - key: VIDEO_AUTO_PUBLISH
+        value: "false"
       - key: ELEVENLABS_MODEL
         value: eleven_v4
       - key: PEXELS_API_KEY

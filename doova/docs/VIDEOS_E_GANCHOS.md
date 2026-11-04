@@ -34,5 +34,24 @@ no `render.yaml`; aumente-os somente se houver memória disponível.
 - `GET /api/videos/{id}` retorna o roteiro SRT, o gancho e a origem.
 - `GET /api/videos/{id}/file` serve o MP4 pronto.
 
-O processamento automático de `POST /api/trends/run` também tenta gerar um vídeo para cada tendência aprovada. Se a
-API de vídeos estiver indisponível, a publicação com foto não é perdida: o relatório retorna `video_error`.
+No modo de renderização `server`, o processamento automático de `POST /api/trends/run` também tenta gerar um vídeo para
+cada tendência aprovada. Se a API de vídeos estiver indisponível, a publicação com foto não é perdida: o relatório
+retorna `video_error`. O comportamento do modo Android é diferente e está descrito abaixo.
+
+### Worker Android
+
+Para transferir o processamento para o celular, configure `VIDEO_RENDER_MODE=android` e um
+`VIDEO_WORKER_TOKEN` exclusivo com pelo menos 32 caracteres. No Render, mantenha também
+`VIDEO_AUTO_PUBLISH=true` para o tick publicar o Reel quando estiver pronto; deixe
+`DRY_RUN=true` até validar o fluxo antes de habilitar a publicação real. O app Android
+precisa da URL HTTPS do serviço e do mesmo token do worker; ele não usa credenciais da Meta,
+Pexels ou Cloudinary.
+
+Nesse modo, a publicação de tendência fica vinculada ao Reel: o publicador de fotos a ignora,
+e o tick aguarda o upload do celular, a aprovação e o horário agendado. Se o celular estiver
+offline ou a busca do vídeo falhar, a publicação é adiada em vez de publicar a foto sozinha.
+O app renderiza um vídeo-fonte vertical com áudio original e legendas simples; não reproduz
+as transições, a narração TTS nem todas as variantes do renderizador FFmpeg.
+Em Android 15 ou superior, o sistema limita o uso contínuo de serviços foreground do tipo
+`dataSync`; se atingir o limite diário, o usuário precisa abrir o app e iniciar o worker
+novamente. A tarefa em andamento será retomada quando o lease expirar.

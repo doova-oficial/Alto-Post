@@ -267,23 +267,44 @@ def run_trend_auto(db: Session, settings: Settings | None = None, force: bool = 
         if len(out["created"]) >= quota:
             row.update(decision="aproveitável", reason="limite diário atingido nesta rodada")
             continue
-        t = TREND_THEMES[theme]
-        photo, log = find_photo(db, t["query_en"], t["query_pt"], s, client)
-        row["photo_search"] = log
-        if photo is None:
-            row.update(decision="descartado", reason="nenhuma foto com licença adequada encontrada")
+        android_video_mode = s.video_render_mode == "android"
+        if android_video_mode and not (s.video_enabled and s.video_search_configured):
+            row.update(decision="adiado", reason="Reel no Android exige vídeo habilitado e provedor configurado")
             continue
+        pending_video_asset = None
+        linked_video_asset = None
+        t = TREND_THEMES[theme]
+        photo = None
+        if android_video_mode:
+            row["photo_search"] = {"skipped": "Reel substitui a foto"}
+        else:
+            photo, log = find_photo(db, t["query_en"], t["query_pt"], s, client)
+            row["photo_search"] = log
+            if photo is None:
+                row.update(decision="descartado", reason="nenhuma foto com licença adequada encontrada")
+                continue
         if s.video_enabled and s.video_search_configured:
             try:
                 from app.services.video_service import VideoSearchError, create_video, public
 
-                video = create_video(db, theme, term, term, s, client=client, render=True)
+                video = create_video(db, theme, term, term, s, client=client, render=not android_video_mode)
+                if android_video_mode:
+                    linked_video_asset = video
+                if android_video_mode and not video.video_url:
+                    pending_video_asset = video
                 row["video"] = public(video)
             except VideoSearchError as e:
                 row["video_error"] = str(e)
+                if android_video_mode:
+                    row.update(decision="adiado", reason="Reel indisponível; a foto não será publicada sozinha")
+                    continue
+        elif android_video_mode:
+            row.update(decision="adiado", reason="Reel indisponível; a foto não será publicada sozinha")
+            continue
         n_trend = db.scalar(select(func.count()).select_from(Post).where(
             Post.content_kind == ContentKind.TREND.value)) or 0
-        template = PHOTO_TEMPLATES[n_trend % len(PHOTO_TEMPLATES)]  # alterna para comparar os dois modelos
+        template = ("autonomos" if android_video_mode
+                    else PHOTO_TEMPLATES[n_trend % len(PHOTO_TEMPLATES)])  # alterna os modelos de foto
         audience = t["audience"]
         title, subtitle = t["title"], SUBTITLES[audience]
         geo = "Goiás" if it.get("geo") == "BR-GO" else "Brasil"
@@ -294,9 +315,10 @@ def run_trend_auto(db: Session, settings: Settings | None = None, force: bool = 
                 topic=f"{term} → {t['label']}", audience=audience,
                 objective=f"aproveitar o assunto em alta '{term}' para lembrar de {t['label']} e apresentar o Doova",
                 theme_key=f"trend:{theme}", campaign_slug="assuntos-do-momento", content_kind=ContentKind.TREND.value,
-                message_type="pergunta", photo_id=photo.id, trend_term=term[:200],
+                message_type="pergunta", photo_id=photo.id if photo else None, trend_term=term[:200],
                 expires_in_hours=s.trend_post_ttl_hours, generate_caption=True,
-                alt_text=f"Foto ilustrativa de banco de imagens com o texto: {title} {subtitle}",
+                alt_text=(f"Foto ilustrativa de banco de imagens com o texto: {title} {subtitle}"
+                          if photo else f"Capa de Reel sobre {term[:180]}"),
                 extra_context=(f"Assunto em alta no Google Trends ({geo}): '{term}'. Use o assunto só como gancho "
                                f"para lembrar de {t['label']}. Não afirme nada sobre o assunto além do nome dele, "
                                "não cite notícias, números, previsões do tempo nem dados."),
@@ -305,7 +327,17 @@ def run_trend_auto(db: Session, settings: Settings | None = None, force: bool = 
         except ContentError as e:
             row.update(decision="erro", reason=str(e))
             continue
-        row.update(decision="publicação criada", post_id=post.id, template=template, photo_id=photo.id)
+        if linked_video_asset is not None:
+            post.video_asset_id = linked_video_asset.id
+        if pending_video_asset is not None:
+            from app.services.video_worker import enqueue_video_render
+
+            render_job = enqueue_video_render(db, pending_video_asset)
+            row["video_render_job"] = {"id": render_job.id, "status": render_job.status}
+        if linked_video_asset is not None:
+            db.commit()
+        row.update(decision="publicação criada", post_id=post.id, template=template,
+                   photo_id=photo.id if photo else None)
         out["created"].append(post.id)
     return out
 
@@ -342,4 +374,3 @@ def trend_recheck(db: Session, post: Post, settings: Settings | None = None) -> 
     except Exception as e:  # sem rede: confere só o termo
         logger.warning("não foi possível atualizar o Google Trends para reconferir '%s': %s", term, e)
     return screen_trend(term, news, s)
-

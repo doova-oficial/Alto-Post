@@ -1,9 +1,9 @@
 import pytest
 
 from app.database import utcnow
-from app.models import VideoAsset, VideoMetricSnapshot
+from app.models import Post, PostStatus, VideoAsset, VideoMetricSnapshot
 from app.services import video_service as vs
-from tests.conftest import FakeMeta, reload_settings
+from tests.conftest import FakeMeta, reload_settings, scheduled_post
 
 
 def _asset(db, *, provider_id="pv1", video_url="https://res.cloudinary.com/demo/video/upload/x.mp4",
@@ -139,3 +139,64 @@ def test_job_video_publish_publishes_pending_reels(db, monkeypatch):
     assert asset.id in res["published"]
     db.refresh(asset)
     assert asset.metadata_json["instagram_media_id"]
+
+
+def test_linked_reel_waits_for_post_schedule_and_uses_post_caption(db, monkeypatch):
+    reload_settings(monkeypatch, VIDEO_AUTO_PUBLISH="true", DRY_RUN="false", META_IG_USER_ID="1",
+                    META_ACCESS_TOKEN="IGAA" + "x" * 30)
+    post = scheduled_post(db)
+    asset = _asset(db, provider_id="linked-auto")
+    post.video_asset_id = asset.id
+    post.scheduled_at = utcnow().replace(year=utcnow().year + 1)
+    db.commit()
+    meta = FakeMeta()
+    monkeypatch.setattr("app.services.meta_service.MetaService", lambda *a, **kw: meta)
+
+    from app.services.scheduler import job_video_publish
+
+    result = job_video_publish()
+    assert asset.id in result["deferred"]
+    assert meta.calls == []
+    assert db.get(Post, post.id).status == PostStatus.SCHEDULED.value
+
+
+def test_linked_reel_waits_while_android_worker_is_offline(db, monkeypatch):
+    reload_settings(monkeypatch, VIDEO_AUTO_PUBLISH="true", DRY_RUN="false", META_IG_USER_ID="1",
+                    META_ACCESS_TOKEN="IGAA" + "x" * 30)
+    post = scheduled_post(db)
+    asset = _asset(db, provider_id="linked-offline", video_url=None)
+    post.video_asset_id = asset.id
+    db.commit()
+    from app.services.scheduler import job_video_publish
+    from app.services.publisher import Publisher
+
+    result = job_video_publish()
+    image_result = Publisher(meta=FakeMeta()).run_cycle()
+
+    assert result["eligible"] == 0 and result["published"] == [] and result["errors"] == []
+    assert image_result["results"] == []
+    assert db.get(Post, post.id).status == PostStatus.SCHEDULED.value
+
+
+def test_linked_reel_publishes_as_post_not_photo_and_syncs_status(db, monkeypatch):
+    reload_settings(monkeypatch, VIDEO_AUTO_PUBLISH="true", DRY_RUN="false", META_IG_USER_ID="1",
+                    META_ACCESS_TOKEN="IGAA" + "x" * 30)
+    post = scheduled_post(db)
+    asset = _asset(db, provider_id="linked-ready")
+    post.video_asset_id = asset.id
+    db.commit()
+    meta = FakeMeta()
+    monkeypatch.setattr("app.services.meta_service.MetaService", lambda *a, **kw: meta)
+
+    from app.services.scheduler import job_video_publish
+    from app.services.publisher import Publisher
+
+    image_cycle = Publisher(meta=meta).run_cycle()
+    assert image_cycle["results"] == []
+    result = job_video_publish()
+
+    assert asset.id in result["published"]
+    assert meta.last_caption == post.caption.text
+    db.refresh(post)
+    assert post.status == PostStatus.PUBLISHED.value
+    assert post.ig_media_id and post.permalink

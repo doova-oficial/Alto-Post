@@ -27,6 +27,8 @@ def test_every_admin_route_requires_token(client):
     for path, ops in app.openapi()["paths"].items():
         if not path.startswith("/api"):
             continue
+        if path.startswith("/api/video-worker"):
+            continue  # usa token próprio, testado em test_video_worker.py
         url = path.replace("{post_id}", "post_x").replace("{artwork_id}", "art_x").replace("{exp_id}", "1") \
             .replace("{opp_id}", "1").replace("{job}", "publish")
         for method in [m.upper() for m in ops]:

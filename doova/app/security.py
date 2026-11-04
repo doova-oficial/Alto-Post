@@ -80,5 +80,16 @@ def require_admin(request: Request, authorization: str | None = Header(default=N
     return "admin"
 
 
+def require_video_worker(x_video_worker_token: str | None = Header(default=None)) -> str:
+    settings = get_settings()
+    expected = settings.video_worker_token.get_secret_value() if settings.video_worker_token else ""
+    if len(expected) < 32:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "VIDEO_WORKER_TOKEN não configurado")
+    if not x_video_worker_token or not hmac.compare_digest(x_video_worker_token.encode(), expected.encode()):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "token do worker de vídeo inválido ou ausente",
+                            headers={"WWW-Authenticate": "Bearer"})
+    return "video_worker"
+
+
 AdminDep = Depends(require_admin)
 GenerationLimit = Depends(rate_limit_generation)

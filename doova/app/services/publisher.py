@@ -142,6 +142,7 @@ class Publisher:
             with session_scope() as db:
                 due = db.scalars(select(Post.id).where(
                     Post.status == PostStatus.SCHEDULED.value, Post.scheduled_at <= now,
+                    Post.video_asset_id.is_(None),
                     or_(Post.next_attempt_at.is_(None), Post.next_attempt_at <= now)
                 ).order_by(Post.scheduled_at).limit(10)).all()
             for pid in due:
@@ -162,6 +163,9 @@ class Publisher:
             post = db.get(Post, post_id)
             if post is None:
                 return {"post_id": post_id, "outcome": "missing"}
+            if post.video_asset_id:
+                return {"post_id": post_id, "outcome": "skipped",
+                        "message": "esta publicação está vinculada a um Reel; use o agendador de vídeos"}
             if post.status not in (PostStatus.APPROVED.value, PostStatus.SCHEDULED.value):
                 return {"post_id": post_id, "outcome": "skipped",
                         "message": f"somente publicações aprovadas podem ser publicadas (estado: {post.status})"}

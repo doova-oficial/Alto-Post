@@ -32,6 +32,7 @@ def health(db: Session = Depends(get_db)):
         "public_base_url_configured": bool(s.public_base_url),
         "cloudinary_configured": s.cloudinary_configured,
         "video_provider": s.video_provider,
+        "video_render_mode": s.video_render_mode,
         "pexels_configured": s.pexels_configured,
         "pixabay_fallback_enabled": s.video_pixabay_fallback_enabled,
         "video_tts_provider": s.video_tts_provider,

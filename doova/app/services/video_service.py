@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.database import utcnow
-from app.models import VideoAsset
+from app.models import Post, PostStatus, VideoAsset
 
 PEXELS_VIDEO_URL = "https://api.pexels.com/v1/videos/search"
 PIXABAY_VIDEO_URL = "https://pixabay.com/api/videos/"
@@ -980,7 +980,8 @@ def _render_video_sources(sources: list[Path], rows: list[dict[str, Any]], setti
     _render_video_sources_progressive(sources, rows, settings, out, duration_seconds, audio=audio,
                                       transition=transition)
     return
-def _upload_to_cloudinary(source: bytes | Path, asset_key: str, settings: Settings) -> tuple[str, str]:
+def _upload_to_cloudinary(source: bytes | Path, asset_key: str, settings: Settings,
+                          overwrite: bool = False) -> tuple[str, str]:
     """Envia o vídeo renderizado e devolve ``(url, public_id)``.
 
     O ``public_id`` (com a pasta) é guardado no vídeo para permitir apagar o
@@ -1007,8 +1008,8 @@ def _upload_to_cloudinary(source: bytes | Path, asset_key: str, settings: Settin
         # direto do disco — não carrega o vídeo inteiro em memória do Python antes de subir.
         payload = str(source) if isinstance(source, Path) else io.BytesIO(source)
         result = upload(
-            payload, resource_type="video", folder=folder,
-            public_id=asset_key, overwrite=False, unique_filename=False,
+            payload, resource_type="video", folder=folder, overwrite=overwrite,
+            public_id=asset_key, unique_filename=False,
         )
         url = result.get("secure_url")
         if not url:
@@ -1245,7 +1246,8 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
     return asset
 
 
-def publish_reel(db: Session, asset: VideoAsset, settings: Settings | None = None, meta=None) -> dict[str, Any]:
+def publish_reel(db: Session, asset: VideoAsset, settings: Settings | None = None, meta=None,
+                 caption_override: str | None = None) -> dict[str, Any]:
     """Publica um Reel já renderizado no Instagram.
 
     Lógica compartilhada pela rota manual (``POST /api/videos/{id}/publish``) e pelo
@@ -1264,7 +1266,9 @@ def publish_reel(db: Session, asset: VideoAsset, settings: Settings | None = Non
         raise VideoPublishError("o Reel ainda não foi renderizado ou enviado ao Cloudinary", status=409)
     if not s.meta_configured:
         raise VideoPublishError("configure META_IG_USER_ID e META_ACCESS_TOKEN para publicar Reels", status=503)
-    caption = f"{asset.hook or asset.trend_term}\n\n{asset.trend_term}\n\nEncontre profissionais e serviços no Doova."
+    caption = caption_override or (
+        f"{asset.hook or asset.trend_term}\n\n{asset.trend_term}\n\nEncontre profissionais e serviços no Doova."
+    )
     context = metadata.get("context_image") or {}
     if context.get("license") == "by":
         caption += (f"\n\nImagem de apoio: {context.get('title') or 'imagem ilustrativa'}, "
@@ -1285,14 +1289,35 @@ def publish_reel(db: Session, asset: VideoAsset, settings: Settings | None = Non
             raise VideoPublishError(f"Meta ainda não concluiu o processamento do Reel (status: {status.status_code})")
         media_id = meta.publish_container(container_id)
         media = meta.get_media(media_id)
-        metadata.update({"instagram_media_id": media_id, "instagram_permalink": media.get("permalink"),
-                         "instagram_published_at": media.get("timestamp")})
+        metadata = {**metadata, "instagram_media_id": media_id, "instagram_permalink": media.get("permalink"),
+                    "instagram_published_at": media.get("timestamp")}
         asset.metadata_json = metadata
         db.commit()
         db.refresh(asset)
         return {"status": "published", "media_id": media_id, "permalink": media.get("permalink")}
     except MetaError as exc:
         raise VideoPublishError(f"falha na publicação do Reel: {exc}") from exc
+
+
+def sync_linked_post_after_reel(db: Session, asset: VideoAsset, result: dict[str, Any]) -> None:
+    """Sincroniza o estado do post associado depois de publicar ou simular seu Reel."""
+    result_status = result.get("status")
+    if result_status not in ("published", "already_published", "simulated"):
+        return
+    post = db.scalar(select(Post).where(Post.video_asset_id == asset.id))
+    if post is None or post.status != PostStatus.SCHEDULED.value:
+        return
+
+    from app.services.content_service import set_status
+
+    post.published_at = utcnow()
+    post.ig_media_id = result.get("media_id") or post.ig_media_id
+    post.permalink = result.get("permalink") or post.permalink
+    final_status = PostStatus.SIMULATED if result_status == "simulated" else PostStatus.PUBLISHED
+    message = ("Reel publicado pelo agendador" if final_status == PostStatus.PUBLISHED
+               else "Reel simulado (DRY_RUN=true)")
+    set_status(db, post, final_status, message)
+    db.commit()
 
 
 def unpublished_rendered_videos(db: Session, limit: int = 20) -> list[VideoAsset]:
@@ -1321,6 +1346,9 @@ def delete_video(db: Session, asset: VideoAsset, settings: Settings | None = Non
 
     s = settings or get_settings()
     metadata = dict(asset.metadata_json or {})
+    linked_posts = db.scalars(select(Post).where(Post.video_asset_id == asset.id)).all()
+    if any(post.status != PostStatus.CANCELLED.value for post in linked_posts):
+        raise VideoDeleteError("vídeo vinculado a uma publicação ativa; cancele a publicação antes de removê-lo")
     published = bool(metadata.get("instagram_media_id"))
     if published and not force:
         raise VideoDeleteError(
@@ -1337,6 +1365,8 @@ def delete_video(db: Session, asset: VideoAsset, settings: Settings | None = Non
         except VideoSearchError as e:
             logger.warning("falha ao apagar vídeo %s do Cloudinary (%s): %s", asset.id, cloudinary_public_id, e)
     video_id = asset.id
+    for post in linked_posts:
+        post.video_asset_id = None
     db.execute(VideoMetricSnapshot.__table__.delete().where(VideoMetricSnapshot.video_id == video_id))
     db.delete(asset)
     db.commit()

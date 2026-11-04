@@ -10,14 +10,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.database import get_db
-from app.models import VideoAsset
+from app.database import get_db, utcnow
+from app.models import Post, PostStatus, VideoAsset
 from app.routes.deps import http_client
 from app.security import AdminDep, GenerationLimit
 from app.services.trend_content import TREND_THEMES, match_theme
 from app.services.video_service import (VIDEO_CREATIVE_SPECS, VIDEO_TRANSITIONS, VideoDeleteError,
                                         VideoPublishError, VideoSearchError, create_video, delete_video,
-                                        public, publish_reel, search_videos)
+                                        public, publish_reel, search_videos,
+                                        sync_linked_post_after_reel)
+from app.services.video_worker import enqueue_video_render
 
 router = APIRouter(prefix="/api", dependencies=[AdminDep])
 
@@ -96,8 +98,9 @@ def video_from_trend(req: VideoTrendRequest, db: Session = Depends(get_db)):
     if req.transition and req.transition not in VIDEO_TRANSITIONS:
         raise HTTPException(422, f"transição inválida: {req.transition}; use uma de {VIDEO_TRANSITIONS}")
     try:
+        remote = req.render and settings.video_render_mode == "android"
         asset = create_video(db, theme, req.trend_term, req.trend_term, settings,
-                             client=http_client(), render=req.render, force=req.force,
+                             client=http_client(), render=req.render and not remote, force=req.force,
                              variant=req.variant, transition=req.transition,
                              duration_seconds=req.duration_seconds,
                              generated_image_count=req.generated_image_count)
@@ -105,15 +108,20 @@ def video_from_trend(req: VideoTrendRequest, db: Session = Depends(get_db)):
         raise HTTPException(502, str(e))
     should_publish = settings.video_auto_publish if req.publish_to_instagram is None else req.publish_to_instagram
     result = public(asset)
-    if should_publish and req.render:
+    if remote and not asset.video_url:
+        job = enqueue_video_render(db, asset)
+        result["render_job"] = {"id": job.id, "status": job.status}
+        result["instagram_publication"] = {"status": "waiting_for_render"}
+    elif should_publish and req.render:
         result["instagram_publication"] = _publish_reel(asset, db, settings)
     return result
 
 
-def _publish_reel(asset: VideoAsset, db: Session, settings=None) -> dict:
+def _publish_reel(asset: VideoAsset, db: Session, settings=None,
+                  caption_override: str | None = None) -> dict:
     """Wrapper fino: a lógica real mora em video_service.publish_reel (reaproveitada pelo job automático)."""
     try:
-        return publish_reel(db, asset, settings)
+        return publish_reel(db, asset, settings, caption_override=caption_override)
     except VideoPublishError as e:
         raise HTTPException(e.status, str(e)) from e
 
@@ -124,7 +132,20 @@ def publish_video_now(video_id: str, db: Session = Depends(get_db)):
     asset = db.get(VideoAsset, video_id)
     if asset is None:
         raise HTTPException(404, "vídeo não encontrado")
-    return _publish_reel(asset, db)
+    post = db.scalar(select(Post).where(Post.video_asset_id == asset.id))
+    caption = None
+    if post is not None:
+        if (post.status != PostStatus.SCHEDULED.value or not post.scheduled_at
+                or post.scheduled_at > utcnow()):
+            raise HTTPException(409, "a publicação vinculada ainda não está aprovada e agendada para agora")
+        if post.expires_at and post.expires_at <= utcnow():
+            raise HTTPException(409, "a publicação vinculada expirou")
+        if post.caption is None or not post.caption.is_valid:
+            raise HTTPException(409, "a publicação vinculada não possui legenda válida")
+        caption = post.caption.text
+    result = _publish_reel(asset, db, caption_override=caption)
+    sync_linked_post_after_reel(db, asset, result)
+    return result
 
 
 @router.get("/videos/factors", tags=["vídeos"],

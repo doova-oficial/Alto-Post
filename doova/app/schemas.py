@@ -159,7 +159,8 @@ def post_out(p: Post, detail: bool = False) -> dict[str, Any]:
         "published_at": iso_utc(p.published_at), "dry_run": p.dry_run, "ig_media_id": p.ig_media_id,
         "permalink": p.permalink, "attempts": p.attempts, "last_error": p.last_error,
         "approved_by": p.approved_by, "image_path": p.artwork.png_path, "created_at": iso_utc(p.created_at),
-        "photo_id": p.photo_id, "trend_term": p.trend_term, "expires_at": iso_utc(p.expires_at),
+        "photo_id": p.photo_id, "video_asset_id": p.video_asset_id, "trend_term": p.trend_term,
+        "expires_at": iso_utc(p.expires_at),
     }
     if detail:
         out["params"] = p.variant.params

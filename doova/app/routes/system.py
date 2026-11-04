@@ -58,6 +58,8 @@ def config():
         "meta_graph_api_version": s.meta_graph_api_version, "meta_configured": s.meta_configured,
         "meta_token_type": "system_user_access_token" if s.meta_login_type == "unified" else "long_lived_user_token",
         "public_base_url": s.public_base_url, "scheduler_enabled": s.scheduler_enabled,
+        "video_render_mode": s.video_render_mode,
+        "video_worker_configured": bool(s.video_worker_token and s.video_worker_token.get_secret_value()),
         "analysis_target_age_hours": s.analysis_target_age_hours,
         "analysis_min_samples_per_group": s.analysis_min_samples_per_group,
         "autonomous": s.autonomous, "posting_strategy": s.posting_strategy,
