@@ -1,6 +1,7 @@
 """API autenticada e restrita para workers Android de renderização."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import tempfile
@@ -15,7 +16,12 @@ from app.config import get_settings
 from app.database import get_db
 from app.models import VideoAsset, VideoRenderJob
 from app.security import require_video_worker
-from app.services.video_service import VideoSearchError, _upload_to_cloudinary
+from app.services.video_service import (
+    VideoSearchError,
+    _elevenlabs_audio_with_timestamps,
+    _upload_to_cloudinary,
+    search_videos,
+)
 from app.services.video_worker import (
     LEASE_MINUTES,
     claim_video_render,
@@ -58,6 +64,40 @@ def claim(req: ClaimRequest, db: Session = Depends(get_db)):
     if claimed is None:
         return {"job": None, "poll_after_seconds": 60}
     job, asset = claimed
+    subtitles = (asset.metadata_json or {}).get("texts", [])
+    narration_text = ". ".join(
+        row.get("text", "").strip() for row in subtitles
+        if isinstance(row, dict) and isinstance(row.get("text"), str) and row["text"].strip()
+    )
+    try:
+        audio, words = _elevenlabs_audio_with_timestamps(
+            narration_text, settings, settings.video_timeout_seconds,
+        )
+    except VideoSearchError as e:
+        fail_video_render(db, job, req.worker_id, f"Narração ElevenLabs falhou: {e}")
+        raise HTTPException(502, str(e)) from e
+    try:
+        reaction_candidates = search_videos(
+            "person holding smartphone surprised reaction", settings,
+        )
+        if not reaction_candidates:
+            raise VideoSearchError("nenhum vídeo de reação encontrado")
+        reaction = reaction_candidates[0]
+    except VideoSearchError as e:
+        fail_video_render(db, job, req.worker_id, f"Vídeo de reação não encontrado: {e}")
+        raise HTTPException(502, str(e)) from e
+    reaction_source = {
+        "url": reaction.download_url,
+        "provider": reaction.provider,
+        "title": reaction.title,
+        "creator": reaction.creator,
+        "landing_url": reaction.landing_url,
+        "license": "Pexels License" if reaction.provider == "pexels" else "Pixabay Content License",
+    }
+    metadata = dict(asset.metadata_json or {})
+    metadata["reaction_source"] = {key: value for key, value in reaction_source.items() if key != "url"}
+    asset.metadata_json = metadata
+    db.commit()
     return {
         "job": {
             "id": job.id,
@@ -72,6 +112,7 @@ def claim(req: ClaimRequest, db: Session = Depends(get_db)):
                 "landing_url": asset.landing_url,
                 "license": asset.license,
             },
+            "reaction_source": reaction_source,
             "render": {
                 "width": settings.video_width,
                 "height": settings.video_height,
@@ -81,7 +122,9 @@ def claim(req: ClaimRequest, db: Session = Depends(get_db)):
                 "theme": asset.theme_key,
                 "trend_term": asset.trend_term,
                 "hook": asset.hook,
-                "subtitles": (asset.metadata_json or {}).get("texts", []),
+                "subtitles": subtitles,
+                "narration_audio_base64": base64.b64encode(audio).decode("ascii"),
+                "narration_words": words,
             },
         }
     }

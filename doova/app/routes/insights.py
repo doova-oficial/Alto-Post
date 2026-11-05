@@ -74,6 +74,11 @@ def video_metrics_summary(metric: str = "engagement_rate", db: Session = Depends
     return van.summary(db, metric=metric)
 
 
+@router.get("/videos/metrics/dashboard", tags=["vídeos"], summary="Dados do painel visual de Reels")
+def video_metrics_dashboard(db: Session = Depends(get_db)):
+    return van.dashboard_data(db)
+
+
 @router.get("/videos/metrics/compare", tags=["vídeos"],
            summary="Comparar Reels por uma dimensão (transição, duração, tema, horário...)")
 def video_metrics_compare(dimension: str = Query(..., description="ex.: transition, duration_bucket, theme_key"),

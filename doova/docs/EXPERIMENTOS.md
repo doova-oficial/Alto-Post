@@ -28,7 +28,7 @@
 - **A/B:** um fator com dois níveis. **Fatorial:** combinações de fatores, até 8 por bloco.
 - **Bloco = tema.** Dentro do bloco, tudo é igual exceto o fator testado: mesmos textos e, por padrão, a mesma legenda.
 - A ordem é **aleatória dentro do bloco**, e todas as publicações saem **no mesmo horário do dia**, em dias diferentes.
-- A comparação usa a métrica na **mesma idade** da publicação (`ANALYSIS_TARGET_AGE_HOURS`, padrão 72 h). Publicações mais novas ficam fora até atingirem essa idade.
+- A comparação usa a métrica na **mesma idade** da publicação (`ANALYSIS_TARGET_AGE_HOURS`, padrão 168 h/7 dias); por tolerância, snapshots com pelo menos 80% da idade-alvo podem ser usados. Publicações mais novas ficam fora. A coleta automática continua a cada 6 h por até 30 dias; a Meta pode levar até 48 h para disponibilizar ou atualizar Insights.
 - Os resultados são apresentados de duas formas: brutos e **ajustados por bloco** (descontando a média do tema).
 - O teste de permutação só roda quando cada grupo tem ao menos `ANALYSIS_MIN_SAMPLES_PER_GROUP` publicações (padrão 5). Abaixo disso, o relatório mostra apenas médias descritivas e diz quantas publicações faltam.
 

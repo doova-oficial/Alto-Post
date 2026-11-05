@@ -197,6 +197,49 @@ def test_tts_prefers_elevenlabs_when_configured(monkeypatch, tmp_path):
     assert calls["json"]["text"] == "[tom acolhedor] Oi"
 
 
+def test_elevenlabs_returns_audio_and_word_level_timestamps(monkeypatch):
+    from app.config import get_settings, reset_settings_cache
+    from app.services import video_service
+
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "eleven-test-key")
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "voice-br")
+    reset_settings_cache()
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {
+                "audio_base64": "SUQz",
+                "alignment": {
+                    "characters": ["O", "i", " ", "D", "o", "o", "v", "a", "!"],
+                    "character_start_times_seconds": [0.0, 0.15, 0.3, 0.5, 0.58, 0.66, 0.74, 0.82, 0.9],
+                    "character_end_times_seconds": [0.15, 0.3, 0.4, 0.58, 0.66, 0.74, 0.82, 0.9, 1.0],
+                },
+            }
+
+    calls = {}
+
+    def fake_post(url, **kwargs):
+        calls.update(url=url, **kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(video_service.httpx, "post", fake_post)
+    audio, words = video_service._elevenlabs_audio_with_timestamps(
+        "Oi Doova!", get_settings(), 5,
+    )
+
+    assert audio == b"ID3"
+    assert words == [
+        {"text": "Oi", "start": 0.0, "end": 0.3},
+        {"text": "Doova!", "start": 0.5, "end": 1.0},
+    ]
+    assert calls["url"].endswith("/voice-br/with-timestamps")
+    assert calls["headers"]["xi-api-key"] == "eleven-test-key"
+
+
 def test_elevenlabs_402_explains_library_voice_restriction(monkeypatch, tmp_path):
     from app.config import get_settings, reset_settings_cache
     from app.services import video_service
@@ -320,11 +363,11 @@ def test_trend_script_uses_observed_context_and_three_second_hook():
     assert rows[-1]["end"] == 12
 
 
-def test_recent_video_performance_context_requires_three_measured_reels(db):
+def test_recent_video_performance_context_ignores_metrics_before_seven_days(db):
     from app.models import VideoAsset, VideoMetricSnapshot
     from app.services.video_service import _recent_video_performance_context
 
-    for index in range(2):
+    for index in range(3):
         asset = VideoAsset(
             provider="pexels", provider_id=f"history-{index}", query="roof", title="t", creator="c",
             source="Pexels", license="Pexels License", landing_url="https://pexels.com/x",
@@ -334,7 +377,7 @@ def test_recent_video_performance_context_requires_three_measured_reels(db):
         )
         db.add(asset)
         db.flush()
-        db.add(VideoMetricSnapshot(video_id=asset.id, age_hours=48, reach=100, shares=5,
+        db.add(VideoMetricSnapshot(video_id=asset.id, age_hours=120, reach=100, shares=5,
                                    avg_watch_time_ms=5000))
     db.commit()
 
@@ -355,7 +398,7 @@ def test_recent_video_performance_context_returns_best_and_worst_reels(db):
         )
         db.add(asset)
         db.flush()
-        db.add(VideoMetricSnapshot(video_id=asset.id, age_hours=48, reach=100, shares=index,
+        db.add(VideoMetricSnapshot(video_id=asset.id, age_hours=200, reach=100, shares=index,
                                    avg_watch_time_ms=watch_time))
     db.commit()
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -14,6 +15,23 @@ from app.models import Artwork
 from app.services.state import is_paused
 
 router = APIRouter(tags=["público"])
+
+
+@router.get("/analytics", include_in_schema=False, response_class=HTMLResponse)
+def analytics_dashboard():
+    page = Path(__file__).resolve().parents[1] / "static" / "analytics.html"
+    if not page.is_file():
+        raise HTTPException(503, "painel de analytics indisponível")
+    return HTMLResponse(
+        page.read_text(encoding="utf-8"),
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": (
+                "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                "connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+            ),
+        },
+    )
 
 
 @router.get("/health", summary="Verificar a saúde do serviço")

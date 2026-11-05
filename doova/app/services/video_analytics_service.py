@@ -41,10 +41,15 @@ VIDEO_COUNT_FIELDS = ["reach", "views", "likes", "comments", "shares", "saved", 
                       "profile_visits", "profile_activity", "follows", "avg_watch_time_ms", "total_watch_time_ms"]
 
 VIDEO_DIMENSIONS: dict[str, str] = {
+    "hook": "Gancho",
     "transition": "Transição entre cenas",
     "duration_bucket": "Duração do vídeo",
     "creative_variant": "Variante criativa",
     "generated_image_count": "Quantidade de imagens geradas no vídeo",
+    "segment_count": "Quantidade de segmentos",
+    "segment_mix": "Composição dos segmentos",
+    "has_generated_card": "Usa card gerado",
+    "render_mode": "Renderizador",
     "theme_key": "Tema",
     "weekday": "Dia da semana",
     "hour_bucket": "Faixa de horário",
@@ -187,6 +192,20 @@ def build_video_dataset(db: Session, settings: Settings | None = None, target_ho
             too_young.append(asset.id)
             continue
         metadata = asset.metadata_json or {}
+        segments = metadata.get("segments") or []
+        segment_counts: dict[str, int] = {}
+        for segment in segments:
+            kind = str(segment.get("kind") or "unknown")
+            segment_counts[kind] = segment_counts.get(kind, 0) + 1
+        segment_mix = " + ".join(f"{kind}: {count}" for kind, count in sorted(segment_counts.items()))
+        generated_count = metadata.get("generated_image_count")
+        has_generated_card = (
+            "sim" if any(item.get("kind") == "generated_image" for item in segments)
+            else "não" if segments
+            else "sim" if isinstance(generated_count, (int, float)) and generated_count > 0
+            else "não" if isinstance(generated_count, (int, float))
+            else None
+        )
         pub_at = _parse_meta_timestamp(metadata.get("instagram_published_at")) or asset.created_at
         local = utc_to_local(pub_at)
         day_count = per_day.get(local.date(), 1) if local else 1
@@ -205,6 +224,10 @@ def build_video_dataset(db: Session, settings: Settings | None = None, target_ho
             "duration_seconds": metadata.get("duration_seconds"),
             "duration_bucket": _duration_bucket(metadata.get("duration_seconds")),
             "generated_image_count": metadata.get("generated_image_count"),
+            "segment_count": len(segments) if segments else None,
+            "segment_mix": segment_mix or None,
+            "has_generated_card": has_generated_card,
+            "render_mode": "Android (Media3)" if metadata.get("android_renderer") == "media3" else "Servidor",
             "daily_video_count_bucket": "1" if day_count <= 1 else ("2" if day_count == 2 else "3+"),
             "snapshot_age_hours": snap.age_hours, "interactions": inter, "interactions_source": inter_src,
             **{k: sd[k] for k in VIDEO_COUNT_FIELDS},
@@ -216,6 +239,74 @@ def build_video_dataset(db: Session, settings: Settings | None = None, target_ho
         rows.append(row)
     return {"target_age_hours": target, "rows": rows, "excluded_too_young": too_young,
             "excluded_no_metrics": no_metrics, "published_total": len(published), "generated_total": len(assets)}
+
+
+def dashboard_data(db: Session, settings: Settings | None = None) -> dict[str, Any]:
+    """Reels publicados com as características do criativo e métricas disponíveis."""
+    settings = settings or get_settings()
+    assets = db.scalars(select(VideoAsset).order_by(VideoAsset.created_at.desc())).all()
+    reels = []
+    for asset in assets:
+        metadata = asset.metadata_json or {}
+        media_id = metadata.get("instagram_media_id")
+        if not media_id:
+            continue
+        snapshots = db.scalars(select(VideoMetricSnapshot).where(VideoMetricSnapshot.video_id == asset.id)
+                               .order_by(VideoMetricSnapshot.collected_at)).all()
+        latest = snapshots[-1] if snapshots else None
+        comparable = analysis_snapshot(snapshots, settings.analysis_target_age_hours)
+
+        def metric_values(snapshot: VideoMetricSnapshot | None) -> tuple[dict, dict, list]:
+            if snapshot is None:
+                return {}, {}, []
+            values = video_snapshot_dict(snapshot)
+            values["duration_seconds"] = metadata.get("duration_seconds") or asset.duration_seconds
+            return ({key: values.get(key) for key in VIDEO_COUNT_FIELDS},
+                    compute_video_rates(values), values["unavailable"])
+
+        metrics, rates, unavailable = metric_values(latest)
+        analysis_metrics, analysis_rates, analysis_unavailable = metric_values(comparable)
+        segments = metadata.get("segments") or []
+        segment_counts: dict[str, int] = {}
+        for segment in segments:
+            kind = str(segment.get("kind") or "unknown")
+            segment_counts[kind] = segment_counts.get(kind, 0) + 1
+        segment_mix = " + ".join(f"{kind}: {count}" for kind, count in sorted(segment_counts.items()))
+        published_at = _parse_meta_timestamp(metadata.get("instagram_published_at")) or asset.created_at
+        local = utc_to_local(published_at)
+        reels.append({
+            "video_id": asset.id,
+            "permalink": metadata.get("instagram_permalink"),
+            "published_at_local": local.isoformat() if local else None,
+            "theme_key": asset.theme_key,
+            "trend_term": asset.trend_term,
+            "hook": asset.hook,
+            "duration_seconds": metadata.get("duration_seconds") or asset.duration_seconds,
+            "transition": metadata.get("transition"),
+            "creative_variant": metadata.get("creative_variant"),
+            "generated_image_count": metadata.get("generated_image_count"),
+            "segment_count": len(segments) if segments else None,
+            "segment_mix": segment_mix or None,
+            "segments": segments,
+            "render_mode": "Android (Media3)" if metadata.get("android_renderer") == "media3" else "Servidor",
+            "metrics": metrics,
+            "rates": rates,
+            "analysis_metrics": analysis_metrics,
+            "analysis_rates": analysis_rates,
+            "snapshot_age_hours": latest.age_hours if latest is not None else None,
+            "analysis_snapshot_age_hours": comparable.age_hours if comparable is not None else None,
+            "metric_basis": "idade-alvo" if comparable is not None else "sem amostra na idade-alvo",
+            "comparable": comparable is not None,
+            "unavailable_metrics": unavailable,
+            "analysis_unavailable_metrics": analysis_unavailable,
+        })
+    return {
+        "generated_at": iso_utc(utcnow()),
+        "target_age_hours": settings.analysis_target_age_hours,
+        "reels": reels,
+        "summary": summary(db, settings),
+        "dimensions": VIDEO_DIMENSIONS,
+    }
 
 
 # ------------------------------------------------------------- comparação

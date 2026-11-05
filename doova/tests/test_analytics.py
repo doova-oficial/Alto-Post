@@ -84,7 +84,8 @@ def _publish(db, post, hours_ago):
 
 
 def test_collect_and_dataset_and_reports(db, monkeypatch, tmp_path):
-    s = reload_settings(monkeypatch, META_IG_USER_ID="1", META_ACCESS_TOKEN="IGAA" + "x" * 30)
+    s = reload_settings(monkeypatch, META_IG_USER_ID="1", META_ACCESS_TOKEN="IGAA" + "x" * 30,
+                         ANALYSIS_TARGET_AGE_HOURS="72")
     old = new_post(db)
     young = new_post(db, overrides={"title": "Outro"})
     _publish(db, old, 80)

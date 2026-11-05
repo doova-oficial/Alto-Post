@@ -29,7 +29,7 @@ O que não passar fica em `needs_review` e **não é publicado**; a vigilância 
 `POSTING_STRATEGY=adaptive` (padrão) usa os horários de `POSTING_CANDIDATE_SLOTS` (07:30, 09:00, 11:30, 12:30, 15:00, 18:00, 19:30, 21:00).
 
 1. **Aprendizado:** enquanto algum horário tiver menos de `TIMING_MIN_SAMPLES` (3) publicações medidas, as publicações são distribuídas em rodízio, começando pelos horários menos testados.
-2. **Aproveitamento:** depois disso, as publicações vão para os horários com maior taxa de engajamento (interações / alcance, medida por volta de 72 h). Em `TIMING_EXPLORE_RATE` (20%) dos dias, um dos horários vai para teste, para perceber mudanças no público.
+2. **Aproveitamento:** depois disso, as publicações vão para os horários com maior taxa de engajamento (interações / alcance, medida por volta de 7 dias). Em `TIMING_EXPLORE_RATE` (20%) dos dias, um dos horários vai para teste, para perceber mudanças no público.
 
 Assuntos do momento esfriam rápido (`TREND_PUBLISH_ASAP`): se o próximo horário estiver a mais de 3 h, a publicação sai em seguida, respeitando o intervalo mínimo e o limite diário. Entre 23h e 7h ela espera o próximo horário.
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import io
 import itertools
@@ -693,6 +694,76 @@ def _tts_elevenlabs(text: str, settings: Settings, out_path: Path, timeout: floa
         raise VideoSearchError("ElevenLabs não gerou um arquivo de áudio válido")
 
 
+def _elevenlabs_audio_with_timestamps(
+    text: str, settings: Settings, timeout: float,
+) -> tuple[bytes, list[dict[str, Any]]]:
+    """Gera narração MP3 e converte o alinhamento de caracteres do ElevenLabs em palavras."""
+    if not settings.elevenlabs_configured:
+        raise VideoSearchError("ElevenLabs não configurado: defina ELEVENLABS_API_KEY e ELEVENLABS_VOICE_ID")
+    try:
+        response = httpx.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{settings.elevenlabs_voice_id}/with-timestamps",
+            headers={"xi-api-key": settings.elevenlabs_api_key.get_secret_value(),
+                     "Accept": "application/json", "Content-Type": "application/json"},
+            json={
+                "text": text,
+                "model_id": settings.elevenlabs_model,
+                "voice_settings": {
+                    "stability": 0.45,
+                    "similarity_boost": 0.75,
+                    "style": 0.2,
+                    "use_speaker_boost": True,
+                },
+            },
+            timeout=timeout,
+        )
+        if response.status_code == 402:
+            raise VideoSearchError(
+                "ElevenLabs recusou ELEVENLABS_VOICE_ID (HTTP 402): contas gratuitas "
+                "nao podem usar vozes da Voice Library via API. Configure uma voz "
+                "propria disponivel em My Voices ou use um plano pago."
+            )
+        if response.status_code != 200:
+            detail = response.text[-300:].replace("\n", " ")
+            raise VideoSearchError(f"ElevenLabs HTTP {response.status_code}: {detail}")
+        payload = response.json()
+        audio = base64.b64decode(payload["audio_base64"], validate=True)
+        alignment = payload.get("alignment") or payload.get("normalized_alignment")
+        characters = alignment["characters"]
+        starts = alignment["character_start_times_seconds"]
+        ends = alignment["character_end_times_seconds"]
+        if not audio or not characters or len(characters) != len(starts) or len(starts) != len(ends):
+            raise ValueError("resposta sem áudio ou alinhamento completo")
+        words: list[dict[str, Any]] = []
+        current: list[str] = []
+        word_start = 0.0
+        word_end = 0.0
+        for character, start, end in zip(characters, starts, ends):
+            if not isinstance(character, str) or not isinstance(start, (int, float)) \
+                    or not isinstance(end, (int, float)) or end < start:
+                raise ValueError("alinhamento contém valores inválidos")
+            if character.isspace():
+                if current:
+                    words.append({"text": "".join(current), "start": word_start, "end": word_end})
+                    current.clear()
+            else:
+                if not current:
+                    word_start = float(start)
+                current.append(character)
+                word_end = float(end)
+        if current:
+            words.append({"text": "".join(current), "start": word_start, "end": word_end})
+        if not words:
+            raise ValueError("alinhamento não contém palavras")
+        return audio, words
+    except VideoSearchError:
+        raise
+    except (httpx.TimeoutException, httpx.TransportError, OSError) as e:
+        raise VideoSearchError(f"ElevenLabs falhou: {type(e).__name__}: {e}") from e
+    except (ValueError, KeyError, TypeError) as e:
+        raise VideoSearchError(f"ElevenLabs devolveu áudio ou alinhamento inválido: {e}") from e
+
+
 def _tts_narration(text: str, settings: Settings, out_path: Path, timeout: float,
                    elevenlabs_text: str | None = None) -> None:
     """Gera ElevenLabs; gTTS só roda quando escolhido explicitamente."""
@@ -708,7 +779,8 @@ def _tts_narration(text: str, settings: Settings, out_path: Path, timeout: float
     raise VideoSearchError(f"provedor de TTS inválido: {settings.video_tts_provider}")
 
 
-def _recent_video_performance_context(db: Session, theme: str, limit: int = 60) -> list[dict[str, Any]]:
+def _recent_video_performance_context(db: Session, theme: str, limit: int = 60,
+                                     min_age_hours: float = 168) -> list[dict[str, Any]]:
     assets = db.scalars(
         select(VideoAsset).where(VideoAsset.theme_key == theme).order_by(VideoAsset.created_at.desc()).limit(limit)
     ).all()
@@ -721,7 +793,7 @@ def _recent_video_performance_context(db: Session, theme: str, limit: int = 60) 
             .order_by(VideoMetricSnapshot.collected_at.desc()).limit(1)
         )
         duration = asset.duration_seconds
-        if snapshot is None or snapshot.age_hours < 24 or not duration:
+        if snapshot is None or snapshot.age_hours < min_age_hours or not duration:
             return
         watch_rate = (snapshot.avg_watch_time_ms / 1000 / duration
                       if snapshot.avg_watch_time_ms is not None else None)
@@ -1185,7 +1257,9 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
                  client: httpx.Client | None = None, render: bool = True, force: bool = False,
                  variant: str | None = None, transition: str | None = None,
                  duration_seconds: float | None = None, generated_image_count: int | None = None,
-                 trend_context: list[str] | None = None, script_groq=None) -> VideoAsset:
+                 trend_context: list[str] | None = None, script_groq=None,
+                 script_override: tuple[str, list[str]] | None = None,
+                 prefer_new: bool = False) -> VideoAsset:
     """Gera (e opcionalmente renderiza) um reel.
 
     variant/transition/duration_seconds/generated_image_count são os níveis dos
@@ -1198,6 +1272,15 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
     candidates = search_videos(query, s, client)
     if not candidates:
         raise VideoSearchError(f"nenhum vídeo adequado encontrado para '{query}'")
+    if prefer_new:
+        candidate = next((item for item in candidates if db.scalar(
+            select(VideoAsset.id).where(VideoAsset.provider == item.provider,
+                                        VideoAsset.provider_id == item.provider_id)
+        ) is None), None)
+        if candidate is None:
+            raise VideoSearchError(f"nenhum vídeo novo encontrado para '{query}'")
+        candidate_index = candidates.index(candidate)
+        candidates = candidates[candidate_index:] + candidates[:candidate_index]
     selected = candidates[:s.video_segment_count]
     candidate = selected[0]
     existing = db.scalar(select(VideoAsset).where(VideoAsset.provider == candidate.provider,
@@ -1219,8 +1302,11 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
         db.commit()
         db.refresh(existing)
         return existing
-    performance_context = _recent_video_performance_context(db, theme) if script_groq is not None else []
-    hook, script_texts = _script_texts(theme, trend_term, trend_context, script_groq, performance_context)
+    performance_context = (_recent_video_performance_context(
+        db, theme, min_age_hours=s.analysis_target_age_hours
+    ) if script_groq is not None else [])
+    hook, script_texts = (script_override if script_override is not None else
+                           _script_texts(theme, trend_term, trend_context, script_groq, performance_context))
     video_url: str | None = None
     digest = ""
     # tudo em disco, dentro de um diretório temporário que é apagado ao sair do with —

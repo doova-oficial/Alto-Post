@@ -56,7 +56,7 @@ Cada arte tem um ID único (`art_…`) e pertence a uma variante (`var_…`), qu
 6. **Fatos permitidos centralizados.** `app/content/doova_context.yaml` é a única fonte de fatos que a IA pode usar. A lista de funcionalidades começa vazia de propósito: só inclua o que já existir no app.
 7. **Oportunidades reais separadas das institucionais.** Uma vaga só pode ser anunciada se vinculada a uma `VerifiedOpportunity`, que registra fonte, quem verificou e data de expiração. Sem esse vínculo, textos como "vagas abertas" mandam a publicação para revisão.
 8. **Estatística conservadora.** O sistema:
-   - compara métricas na mesma idade da publicação (72 h por padrão);
+   - compara métricas na mesma idade da publicação (168 h/7 dias por padrão);
    - usa teste de permutação só quando cada grupo tem amostra mínima;
    - aplica ajuste por bloco (tema);
    - escreve as conclusões sempre como associação, nunca como causa.

@@ -47,22 +47,24 @@ services:
         sync: false
       - key: META_APP_SECRET
         sync: false
-      # Comece em simulação (DRY_RUN=true); troque para false quando a Meta estiver conectada.
-      # Modo automático: sem aprovação manual, com checagens automáticas e alertas.
       - key: DRY_RUN
-        value: "true"
+        value: "false"
       - key: REQUIRE_MANUAL_APPROVAL
         value: "false"
       - key: AUTO_SCHEDULE
         value: "true"
       - key: POSTING_STRATEGY
-        value: adaptive
+        value: fixed
       - key: ALERT_WEBHOOK_URL
         sync: false
       - key: MAX_POSTS_PER_DAY
-        value: "2"
+        value: "10"
       - key: MIN_MINUTES_BETWEEN_POSTS
-        value: "180"
+        value: "90"
+      - key: POSTING_SLOTS
+        value: 08:00,09:30,11:00,12:30,14:00,15:30,17:00,18:30,20:00,21:30
+      - key: ANALYSIS_TARGET_AGE_HOURS
+        value: "168"
       - key: SCHEDULER_ENABLED
         value: "true"
       - key: TIMEZONE
@@ -92,11 +94,11 @@ services:
       - key: VIDEO_TTS_PROVIDER
         value: elevenlabs
       - key: VIDEO_RENDER_MODE
-        value: server
+        value: android
       - key: VIDEO_WORKER_TOKEN
         sync: false
       - key: VIDEO_AUTO_PUBLISH
-        value: "false"
+        value: "true"
       - key: ELEVENLABS_MODEL
         value: eleven_v4
       - key: PEXELS_API_KEY
@@ -114,7 +116,9 @@ services:
       - key: TREND_AUTO_ENABLED
         value: "true"
       - key: TREND_AUTO_MAX_PER_DAY
-        value: "3"
+        value: "10"
+      - key: TREND_AUTO_INTERVAL_HOURS
+        value: "1"
 
 databases:
   - name: doova-db

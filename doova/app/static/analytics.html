@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Analytics de Reels | Doova</title>
+  <style>
+    :root {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: #242126;
+      background: #f6f4f2;
+      font-synthesis: none;
+      --ink: #242126;
+      --muted: #77727a;
+      --line: #e9e5e8;
+      --paper: #fff;
+      --red: #ef3155;
+      --pink: #f04c9b;
+      --green: #237b58;
+      --amber: #92610b;
+      --shadow: 0 12px 36px rgba(31, 23, 31, .06);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    .shell { max-width: 1440px; padding: 28px 36px 64px; margin: auto; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 28px; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .logo { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 14px; color: white; font-weight: 900; background: linear-gradient(135deg, var(--red), var(--pink)); }
+    .brand-name { font-weight: 850; letter-spacing: .12em; font-size: 13px; }
+    .brand-sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .actions { display: flex; gap: 9px; align-items: center; }
+    .button { border: 0; border-radius: 11px; padding: 11px 15px; color: white; background: var(--ink); font-weight: 700; }
+    .button.secondary { color: var(--ink); background: white; border: 1px solid var(--line); }
+    .button.accent { background: linear-gradient(100deg, var(--red), var(--pink)); }
+    .button:disabled { opacity: .55; cursor: wait; }
+    h1 { margin: 0; font-size: clamp(29px, 4vw, 42px); letter-spacing: -.045em; }
+    .lead { color: var(--muted); margin: 9px 0 22px; max-width: 780px; line-height: 1.55; }
+    .auth, .panel, .kpi, .notice { background: var(--paper); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
+    .auth { padding: 20px; margin: 20px 0; display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 14px; align-items: end; }
+    .auth h2 { grid-column: 1 / -1; margin: 0; font-size: 17px; }
+    .field label { display: block; font-size: 12px; font-weight: 750; margin-bottom: 7px; }
+    input, select { width: 100%; padding: 11px 12px; background: white; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); }
+    .auth-note { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 12px; }
+    .status { min-height: 22px; margin: 12px 0; font-size: 13px; color: var(--muted); }
+    .status.error { color: #ad1c36; }
+    .status.success { color: var(--green); }
+    [hidden] { display: none !important; }
+    .section-heading { display: flex; justify-content: space-between; align-items: end; gap: 18px; margin: 30px 0 14px; }
+    .section-heading h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
+    .section-heading p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+    .kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+    .kpi { padding: 17px 18px; min-height: 104px; }
+    .kpi-label { color: var(--muted); font-size: 12px; font-weight: 700; }
+    .kpi-value { margin-top: 10px; font-size: clamp(21px, 2.5vw, 29px); font-weight: 850; letter-spacing: -.04em; }
+    .kpi-foot { color: var(--muted); font-size: 11px; margin-top: 4px; }
+    .notice { padding: 14px 17px; margin: 14px 0; color: #5d4a20; background: #fffaf0; border-color: #f0dfb8; font-size: 13px; line-height: 1.5; }
+    .panel { padding: 20px; }
+    .analysis-controls { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr); gap: 12px; max-width: 660px; margin: 17px 0; }
+    .chart { display: grid; gap: 15px; margin: 18px 0; }
+    .bar-row { display: grid; grid-template-columns: minmax(130px, 210px) minmax(90px, 1fr) 100px; gap: 13px; align-items: center; }
+    .bar-name { font-size: 13px; font-weight: 720; overflow-wrap: anywhere; }
+    .bar-track { height: 15px; background: #f1eef1; border-radius: 20px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--red), var(--pink)); min-width: 2px; }
+    .bar-value { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+    .interpretation { border-top: 1px solid var(--line); padding-top: 14px; color: #4c4650; font-size: 13px; line-height: 1.55; }
+    .chart-empty { color: var(--muted); padding: 22px 0; font-size: 13px; }
+    .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 13px; }
+    table { border-collapse: collapse; width: 100%; min-width: 1420px; font-size: 12px; }
+    th, td { padding: 12px 13px; border-bottom: 1px solid var(--line); vertical-align: top; text-align: left; }
+    th { position: sticky; top: 0; background: #fbfafb; color: #68616c; font-size: 10px; text-transform: uppercase; letter-spacing: .07em; z-index: 1; }
+    tbody tr:last-child td { border-bottom: 0; }
+    td.number { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .hook-cell { min-width: 210px; max-width: 310px; font-weight: 700; line-height: 1.45; }
+    .subtle { color: var(--muted); display: block; font-weight: 450; margin-top: 4px; line-height: 1.45; }
+    .tag { display: inline-block; border-radius: 99px; padding: 4px 8px; background: #f4f0f3; white-space: nowrap; }
+    .tag.ready { background: #eaf6ef; color: var(--green); }
+    .tag.wait { background: #fff4dc; color: var(--amber); }
+    a { color: #c52555; font-weight: 700; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .limitations { color: var(--muted); padding-left: 18px; font-size: 12px; line-height: 1.65; }
+    .footer { margin-top: 28px; color: var(--muted); font-size: 11px; text-align: center; }
+    @media (max-width: 900px) { .shell { padding: 20px 18px 48px; } .kpis { grid-template-columns: repeat(2, 1fr); } .kpi:last-child { grid-column: span 2; } }
+    @media (max-width: 600px) {
+      .shell { padding: 15px 12px 36px; }
+      .topbar { align-items: flex-start; }
+      .actions { flex-direction: column; align-items: stretch; }
+      .actions .button { white-space: nowrap; padding: 10px; }
+      .auth { grid-template-columns: 1fr; }
+      .auth h2, .auth-note { grid-column: auto; }
+      .kpis { gap: 8px; }
+      .kpi { padding: 13px; min-height: 92px; }
+      .analysis-controls { grid-template-columns: 1fr; }
+      .panel { padding: 14px; }
+      .bar-row { grid-template-columns: minmax(95px, 1fr) minmax(70px, 1.2fr) 72px; gap: 8px; }
+      .section-heading { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">D</div>
+        <div><div class="brand-name">DOOVA / DATA</div><div class="brand-sub">Painel de desempenho de Reels</div></div>
+      </div>
+      <div class="actions" id="actions" hidden>
+        <button class="button secondary" id="refreshButton" type="button">Atualizar</button>
+        <button class="button secondary" id="collectButton" type="button">Buscar métricas na Meta</button>
+        <button class="button" id="disconnectButton" type="button">Sair</button>
+      </div>
+    </header>
+
+    <h1>O que está funcionando nos seus Reels?</h1>
+    <p class="lead">Veja visualizações, alcance, retenção e compartilhamentos junto das características criativas de cada vídeo. Compare apenas métricas na mesma janela de análise para evitar conclusões precipitadas.</p>
+
+    <section class="auth" id="authPanel" aria-label="Autenticação administrativa">
+      <h2>Acesso administrativo</h2>
+      <div class="field">
+        <label for="tokenInput">ADMIN_API_TOKEN</label>
+        <input id="tokenInput" type="password" autocomplete="off" placeholder="Cole o token administrativo do Render">
+      </div>
+      <button class="button accent" id="connectButton" type="button">Abrir meu painel</button>
+      <p class="auth-note">O token é enviado somente à API deste serviço e fica guardado apenas nesta aba enquanto ela estiver aberta.</p>
+    </section>
+
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+
+    <div id="dashboard" hidden>
+      <section>
+        <div class="section-heading">
+          <div><h2>Visão geral</h2><p id="windowNote">Métricas mais recentes coletadas</p></div>
+          <span class="tag" id="updatedAt">—</span>
+        </div>
+        <div class="kpis" id="kpis"></div>
+        <div class="notice" id="dataNotice"></div>
+      </section>
+
+      <section>
+        <div class="section-heading">
+          <div><h2>Compare características</h2><p>As barras usam publicações com pelo menos 80% da idade-alvo; grupos pequenos são apenas indicativos.</p></div>
+        </div>
+        <div class="panel">
+          <div class="analysis-controls">
+            <div class="field"><label for="dimensionSelect">Característica do vídeo</label><select id="dimensionSelect"></select></div>
+            <div class="field"><label for="metricSelect">Métrica</label><select id="metricSelect"></select></div>
+          </div>
+          <div id="comparisonStatus" class="subtle"></div>
+          <div class="chart" id="chart" role="img" aria-label="Gráfico de barras comparando características dos Reels"></div>
+          <div class="interpretation" id="interpretation"></div>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-heading">
+          <div><h2>Publicações e características</h2><p>Os números da tabela são da última coleta por Reel. “Pronto para comparação” indica que atingiu a idade-alvo.</p></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Publicado</th><th>Gancho / assunto</th><th>Tema</th><th>Duração</th>
+              <th>Formato / transição</th><th>Composição</th><th>Views</th><th>Alcance</th>
+              <th>Tempo médio</th><th>Retenção aprox.</th><th>Compart.</th><th>Interações</th>
+              <th>Amostra</th><th>Instagram</th>
+            </tr></thead>
+            <tbody id="reelRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-heading"><div><h2>Como interpretar</h2><p>Dados observacionais não provam que uma característica causou um resultado.</p></div></div>
+        <div class="panel"><ul class="limitations" id="limitations"></ul></div>
+      </section>
+    </div>
+    <div class="footer">Doova Analytics · Dados privados da sua conta · Atualize os Insights na Meta quando precisar</div>
+  </main>
+
+  <script>
+    (() => {
+      const tokenKey = "doova.analytics.adminToken";
+      const tokenInput = document.getElementById("tokenInput");
+      const status = document.getElementById("status");
+      const authPanel = document.getElementById("authPanel");
+      const dashboard = document.getElementById("dashboard");
+      const actions = document.getElementById("actions");
+      const nf = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 });
+      const pct = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDigits: 1 });
+      let token = sessionStorage.getItem(tokenKey) || "";
+      let dimensions = {};
+      let currentData = null;
+      const metricOptions = [
+        ["engagement_rate", "Interações / alcance"],
+        ["views_per_reach", "Views por pessoa alcançada"],
+        ["watch_through_rate", "Retenção aproximada"],
+        ["reach", "Alcance"],
+        ["views", "Visualizações"],
+        ["avg_watch_time_ms", "Tempo médio assistido"],
+        ["shares", "Compartilhamentos"],
+        ["saved", "Salvamentos"],
+        ["comments", "Comentários"],
+        ["likes", "Curtidas"],
+        ["profile_visits", "Visitas ao perfil"],
+        ["follows", "Seguidores atribuídos"]
+      ];
+
+      function setStatus(message, kind = "") {
+        status.textContent = message;
+        status.className = `status ${kind}`;
+      }
+
+      async function api(path, options = {}) {
+        const headers = new Headers(options.headers || {});
+        headers.set("Authorization", `Bearer ${token}`);
+        const response = await fetch(path, { ...options, headers, cache: "no-store" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (response.status === 401) {
+            sessionStorage.removeItem(tokenKey);
+            token = "";
+            authPanel.hidden = false;
+            dashboard.hidden = true;
+            actions.hidden = true;
+          }
+          throw new Error(body.detail || `Falha na API (${response.status})`);
+        }
+        return body;
+      }
+
+      function number(value) {
+        return value === null || value === undefined ? "—" : nf.format(value);
+      }
+
+      function duration(seconds) {
+        if (seconds === null || seconds === undefined) return "—";
+        return `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(seconds)} s`;
+      }
+
+      function rate(value) {
+        return value === null || value === undefined ? "—" : pct.format(value);
+      }
+
+      function dateTime(value) {
+        if (!value) return "—";
+        const date = new Date(value);
+        return Number.isNaN(date.valueOf()) ? "—" : new Intl.DateTimeFormat("pt-BR", {
+          dateStyle: "short", timeStyle: "short"
+        }).format(date);
+      }
+
+      function sumMetric(reels, key) {
+        const values = reels.map((reel) => reel.metrics && reel.metrics[key]).filter((value) => value !== null && value !== undefined);
+        return values.length ? values.reduce((total, value) => total + value, 0) : null;
+      }
+
+      function averageMetric(reels, key) {
+        const values = reels.map((reel) => reel.metrics && reel.metrics[key]).filter((value) => value !== null && value !== undefined);
+        return values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
+      }
+
+      function addKpi(container, label, value, note) {
+        const card = document.createElement("article");
+        card.className = "kpi";
+        const title = document.createElement("div");
+        title.className = "kpi-label";
+        title.textContent = label;
+        const figure = document.createElement("div");
+        figure.className = "kpi-value";
+        figure.textContent = value;
+        const foot = document.createElement("div");
+        foot.className = "kpi-foot";
+        foot.textContent = note;
+        card.append(title, figure, foot);
+        container.append(card);
+      }
+
+      function renderOverview(data) {
+        const reels = data.reels || [];
+        const withMetrics = reels.filter((reel) => reel.snapshot_age_hours !== null);
+        const kpis = document.getElementById("kpis");
+        kpis.replaceChildren();
+        addKpi(kpis, "Reels publicados", number(data.summary.videos_published), `${number(data.summary.videos_generated)} vídeos gerados no total`);
+        addKpi(kpis, "Visualizações", number(sumMetric(withMetrics, "views")), "soma dos valores reportados na última coleta");
+        addKpi(kpis, "Alcance", number(sumMetric(withMetrics, "reach")), "soma dos valores reportados na última coleta");
+        const averageWatchMs = averageMetric(withMetrics, "avg_watch_time_ms");
+        addKpi(kpis, "Tempo médio assistido", duration(averageWatchMs === null ? null : averageWatchMs / 1000), "média simples entre Reels com dado");
+        addKpi(kpis, "Prontos para comparar", number(data.summary.videos_analyzed), `idade-alvo: ${number(data.target_age_hours)} h`);
+
+        const noMetrics = reels.length - withMetrics.length;
+        const pending = reels.filter((reel) => !reel.comparable).length;
+        document.getElementById("windowNote").textContent =
+          `Última coleta por Reel. O alvo da comparação é ${number(data.target_age_hours)} h (elegível a partir de 80% desse prazo); métricas ausentes não são tratadas como zero.`;
+        document.getElementById("dataNotice").textContent =
+          `${pending} Reel(s) ainda aguardam a janela de análise (alvo ${number(data.target_age_hours)} h; mínimo 80%) para entrar nas comparações; ` +
+          `${noMetrics} Reel(s) ainda não têm métricas coletadas. A Meta pode levar até 48 h para disponibilizar ou atualizar Insights.`;
+        document.getElementById("updatedAt").textContent = `Atualizado ${dateTime(data.generated_at)}`;
+      }
+
+      function addOption(select, value, label) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        select.append(option);
+      }
+
+      function setupSelectors(data) {
+        const dimensionSelect = document.getElementById("dimensionSelect");
+        const metricSelect = document.getElementById("metricSelect");
+        dimensionSelect.replaceChildren();
+        metricSelect.replaceChildren();
+        dimensions = data.dimensions || {};
+        Object.entries(dimensions).forEach(([key, label]) => addOption(dimensionSelect, key, label));
+        metricOptions.forEach(([key, label]) => addOption(metricSelect, key, label));
+        dimensionSelect.value = dimensions.theme_key ? "theme_key" : Object.keys(dimensions)[0];
+        metricSelect.value = "engagement_rate";
+      }
+
+      function formatComparisonValue(metric, value) {
+        if (metric === "engagement_rate" || metric === "share_rate" || metric === "save_rate" ||
+            metric === "views_per_reach" || metric === "watch_through_rate" ||
+            metric === "profile_visit_rate" || metric === "follow_rate") return rate(value);
+        if (metric === "avg_watch_time_ms" || metric === "total_watch_time_ms") return duration(value / 1000);
+        return number(value);
+      }
+
+      function renderComparison(result) {
+        const chart = document.getElementById("chart");
+        chart.replaceChildren();
+        const groups = result.groups || [];
+        const max = Math.max(...groups.map((item) => item.mean), 0);
+        if (!groups.length) {
+          const empty = document.createElement("div");
+          empty.className = "chart-empty";
+          empty.textContent = "Ainda não há Reels com essa métrica na idade-alvo. As comparações começam quando os vídeos atingirem o período indicado.";
+          chart.append(empty);
+        } else {
+          for (const group of groups) {
+            const row = document.createElement("div");
+            row.className = "bar-row";
+            const label = document.createElement("div");
+            label.className = "bar-name";
+            label.textContent = group.group === "None" ? "Não informado" : group.group;
+            const track = document.createElement("div");
+            track.className = "bar-track";
+            const fill = document.createElement("div");
+            fill.className = "bar-fill";
+            fill.style.width = `${max > 0 ? Math.max(2, (group.mean / max) * 100) : 2}%`;
+            track.append(fill);
+            const value = document.createElement("div");
+            value.className = "bar-value";
+            value.textContent = `${formatComparisonValue(result.metric, group.mean)} · n=${group.n}`;
+            row.append(label, track, value);
+            chart.append(row);
+          }
+        }
+        const test = result.test || {};
+        document.getElementById("comparisonStatus").textContent =
+          `${result.dimension_label} · ${result.metric_definition} · ${number(result.observations)} observações · mínimo ${number(result.min_samples_per_group)} por grupo`;
+        const interpretation = document.getElementById("interpretation");
+        interpretation.textContent = result.interpretation || "";
+        if (test.performed) {
+          interpretation.textContent += ` Teste de permutação: p=${test.p_value}; ${test.significant ? "diferença estatisticamente detectável" : "sem diferença estatisticamente detectável"}.`;
+        }
+      }
+
+      function renderTable(reels) {
+        const tbody = document.getElementById("reelRows");
+        tbody.replaceChildren();
+        if (!reels.length) {
+          const row = document.createElement("tr");
+          const cell = document.createElement("td");
+          cell.colSpan = 14;
+          cell.textContent = "Nenhum Reel publicado foi encontrado.";
+          row.append(cell);
+          tbody.append(row);
+          return;
+        }
+        for (const reel of reels) {
+          const row = document.createElement("tr");
+          const values = [
+            dateTime(reel.published_at_local),
+            reel.hook || reel.trend_term || "Sem gancho registrado",
+            reel.theme_key || "—",
+            duration(reel.duration_seconds),
+            `${reel.creative_variant || "variante não informada"} · ${reel.transition || "sem transição"}`,
+            `${reel.segment_mix || "composição não registrada"}${reel.segment_count ? ` (${reel.segment_count})` : ""} · ${reel.render_mode}`,
+            number(reel.metrics && reel.metrics.views),
+            number(reel.metrics && reel.metrics.reach),
+            duration(reel.metrics && reel.metrics.avg_watch_time_ms !== null ? reel.metrics.avg_watch_time_ms / 1000 : null),
+            rate(reel.rates && reel.rates.watch_through_rate),
+            number(reel.metrics && reel.metrics.shares),
+            number(reel.metrics && reel.metrics.total_interactions),
+            ""
+          ];
+          values.forEach((value, index) => {
+            const cell = document.createElement("td");
+            cell.textContent = value;
+            if (index >= 6 && index <= 11) cell.className = "number";
+            if (index === 1) cell.className = "hook-cell";
+            if (index === 4) {
+              const details = document.createElement("span");
+              details.className = "subtle";
+              details.textContent = `Cards gerados: ${number(reel.generated_image_count)}`;
+              cell.append(details);
+            }
+            if (index === 12) {
+              const tag = document.createElement("span");
+              tag.className = `tag ${reel.comparable ? "ready" : "wait"}`;
+              tag.textContent = reel.comparable
+                ? `comparável · ${number(reel.analysis_snapshot_age_hours)} h`
+                : reel.snapshot_age_hours === null ? "sem métricas" : `aguardando · ${number(reel.snapshot_age_hours)} h`;
+              cell.append(tag);
+              if (reel.unavailable_metrics && reel.unavailable_metrics.length) {
+                const note = document.createElement("span");
+                note.className = "subtle";
+                note.textContent = `Indisponíveis: ${reel.unavailable_metrics.join(", ")}`;
+                cell.append(note);
+              }
+            }
+            row.append(cell);
+          });
+          const linkCell = document.createElement("td");
+          if (typeof reel.permalink === "string" && reel.permalink.startsWith("https://www.instagram.com/")) {
+            const link = document.createElement("a");
+            link.href = reel.permalink;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = "Abrir Reel";
+            linkCell.append(link);
+          } else {
+            linkCell.textContent = "—";
+          }
+          row.append(linkCell);
+          tbody.append(row);
+        }
+      }
+
+      function renderLimitations(items) {
+        const list = document.getElementById("limitations");
+        list.replaceChildren();
+        (items || []).forEach((text) => {
+          const item = document.createElement("li");
+          item.textContent = text;
+          list.append(item);
+        });
+      }
+
+      async function loadComparison() {
+        const dimension = document.getElementById("dimensionSelect").value;
+        const metric = document.getElementById("metricSelect").value;
+        if (!dimension || !metric) return;
+        try {
+          const query = new URLSearchParams({ dimension, metric });
+          const result = await api(`/api/videos/metrics/compare?${query}`);
+          renderComparison(result);
+        } catch (error) {
+          setStatus(error.message, "error");
+        }
+      }
+
+      async function loadDashboard() {
+        if (!token) return;
+        const refreshButton = document.getElementById("refreshButton");
+        refreshButton.disabled = true;
+        setStatus("Carregando métricas e características dos Reels…");
+        try {
+          const data = await api("/api/videos/metrics/dashboard");
+          currentData = data;
+          authPanel.hidden = true;
+          dashboard.hidden = false;
+          actions.hidden = false;
+          renderOverview(data);
+          setupSelectors(data);
+          renderTable(data.reels || []);
+          renderLimitations(data.summary.limitations);
+          await loadComparison();
+          setStatus("Painel atualizado.", "success");
+        } catch (error) {
+          setStatus(error.message, "error");
+        } finally {
+          refreshButton.disabled = false;
+        }
+      }
+
+      document.getElementById("connectButton").addEventListener("click", async () => {
+        const entered = tokenInput.value.trim();
+        if (!entered) {
+          setStatus("Cole o ADMIN_API_TOKEN para continuar.", "error");
+          return;
+        }
+        token = entered;
+        sessionStorage.setItem(tokenKey, token);
+        await loadDashboard();
+        if (!currentData) tokenInput.value = "";
+      });
+      document.getElementById("refreshButton").addEventListener("click", loadDashboard);
+      document.getElementById("disconnectButton").addEventListener("click", () => {
+        sessionStorage.removeItem(tokenKey);
+        token = "";
+        currentData = null;
+        dashboard.hidden = true;
+        actions.hidden = true;
+        authPanel.hidden = false;
+        tokenInput.value = "";
+        setStatus("Sessão encerrada.");
+      });
+      document.getElementById("dimensionSelect").addEventListener("change", loadComparison);
+      document.getElementById("metricSelect").addEventListener("change", loadComparison);
+      document.getElementById("collectButton").addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        setStatus("Solicitando atualização dos Insights à Meta…");
+        try {
+          const result = await api("/api/videos/metrics/collect", { method: "POST" });
+          const errors = (result.errors || []).length;
+          await loadDashboard();
+          setStatus(`Coleta concluída: ${number(result.collected)} Reel(s) atualizado(s), ${number(result.skipped_recent)} já recentes${errors ? `, ${errors} erro(s)` : ""}.`, errors ? "error" : "success");
+        } catch (error) {
+          setStatus(error.message, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      if (token) loadDashboard();
+    })();
+  </script>
+</body>
+</html>

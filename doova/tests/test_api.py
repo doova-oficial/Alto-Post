@@ -19,6 +19,16 @@ def test_health_is_public(client):
     assert body["video_tts_enabled"] is True
 
 
+def test_visual_analytics_dashboard_is_public_shell(client):
+    response = client.get("/analytics")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert response.headers["cache-control"] == "no-store"
+    assert "ADMIN_API_TOKEN" in response.text
+    assert "Compare características" in response.text
+
+
 def test_every_admin_route_requires_token(client):
     from app.main import app
 
@@ -116,9 +126,14 @@ def test_generation_rate_limit(client, auth, monkeypatch):
     assert codes == [200, 200, 429]
 
 
-def test_config_does_not_leak_secrets(client, auth):
-    body = client.get("/api/config", headers=auth).text
+def test_config_does_not_leak_secrets(client, auth, monkeypatch):
+    reload_settings(monkeypatch, MAX_POSTS_PER_DAY="10", TREND_AUTO_MAX_PER_DAY="10")
+    response = client.get("/api/config", headers=auth)
+    body = response.text
     assert ADMIN_TOKEN not in body and "gsk_" not in body
+    config = response.json()
+    assert config["max_posts_per_day"] == 10
+    assert config["trend_auto_max_per_day"] == 10
 
 
 def test_suggestions_and_library(client, auth):
@@ -131,3 +146,11 @@ def test_suggestions_and_library(client, auth):
 def test_metrics_summary_empty(client, auth):
     r = client.get("/api/metrics/summary", headers=auth)
     assert r.status_code == 200 and r.json()["posts_analyzed"] == 0 and r.json()["limitations"]
+
+
+def test_video_analytics_dashboard_data_requires_admin(client, auth):
+    assert client.get("/api/videos/metrics/dashboard").status_code == 401
+    response = client.get("/api/videos/metrics/dashboard", headers=auth)
+    assert response.status_code == 200
+    assert response.json()["reels"] == []
+    assert "segment_mix" in response.json()["dimensions"]

@@ -68,17 +68,17 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------ publicação
     dry_run: bool = True
     require_manual_approval: bool = False  # false = modo automático (aprova, agenda e publica sozinho)
-    max_posts_per_day: int = Field(default=2, ge=1, le=50)  # limite próprio, abaixo do limite da Meta (100/24h)
-    min_minutes_between_posts: int = Field(default=180, ge=0)
+    max_posts_per_day: int = Field(default=10, ge=1, le=50)  # limite próprio, abaixo do limite da Meta (100/24h)
+    min_minutes_between_posts: int = Field(default=90, ge=0)
     publish_max_attempts: int = Field(default=3, ge=1, le=10)
     container_max_checks: int = Field(default=6, ge=1, le=20)
     container_check_interval_seconds: float = Field(default=5.0, ge=0, le=60)
     auto_schedule: bool = True
-    posting_slots: str = "11:30,19:00"  # horários locais usados pelo agendamento automático
+    posting_slots: str = "08:00,09:30,11:00,12:30,14:00,15:30,17:00,18:30,20:00,21:30"
     posting_weekdays: str = "0,1,2,3,4,5,6"  # 0=segunda ... 6=domingo
     # horário: "adaptive" aprende com o engajamento; "fixed" usa só POSTING_SLOTS
     posting_strategy: Literal["adaptive", "fixed"] = "adaptive"
-    posting_candidate_slots: str = "07:30,09:00,11:30,12:30,15:00,18:00,19:30,21:00"
+    posting_candidate_slots: str = "08:00,09:30,11:00,12:30,14:00,15:30,17:00,18:30,20:00,21:30"
     timing_min_samples: int = Field(default=3, ge=1, le=50)  # publicações medidas por horário antes de escolher
     timing_explore_rate: float = Field(default=0.2, ge=0, le=1)  # fração que continua testando outros horários
     timing_window_minutes: int = Field(default=45, ge=5, le=180)  # tolerância para associar um post a um horário
@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     instance_id: str | None = None
 
     # ------------------------------------------------------------- análises
-    analysis_target_age_hours: int = Field(default=72, ge=1)
+    analysis_target_age_hours: int = Field(default=168, ge=1)
     analysis_min_samples_per_group: int = Field(default=5, ge=2)
     analysis_alpha: float = Field(default=0.05, gt=0, lt=1)
     analysis_permutations: int = Field(default=5000, ge=200, le=100000)
@@ -170,8 +170,8 @@ class Settings(BaseSettings):
 
     # ------------------------------------------- assuntos do momento (automÃ¡tico)
     trend_auto_enabled: bool = True
-    trend_auto_interval_hours: int = Field(default=6, ge=1)
-    trend_auto_max_per_day: int = Field(default=3, ge=1, le=5)
+    trend_auto_interval_hours: int = Field(default=1, ge=1)
+    trend_auto_max_per_day: int = Field(default=10, ge=1, le=10)
     trend_post_ttl_hours: int = Field(default=48, ge=6, le=240)
     trend_blocklist_extra: str = ""  # palavras proibidas extras, separadas por vírgula
     trend_use_groq: bool = True

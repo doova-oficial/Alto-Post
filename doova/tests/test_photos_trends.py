@@ -266,6 +266,48 @@ def test_android_trend_can_queue_three_reels_per_day(db, monkeypatch):
     assert db.query(Post).filter(Post.video_asset_id.is_not(None)).count() == 3
 
 
+def test_catalog_reel_auto_fills_ten_reels_and_respects_daily_quota(db, monkeypatch):
+    from app.models import Post, VideoAsset, VideoRenderJob
+    from app.services import trend_content as tc
+
+    s = reload_settings(
+        monkeypatch, TREND_AUTO_ENABLED="true", TREND_AUTO_MAX_PER_DAY="10",
+        VIDEO_RENDER_MODE="android", VIDEO_WORKER_TOKEN="worker-token-with-at-least-32-characters",
+        PEXELS_API_KEY="test-pexels-key", REQUIRE_MANUAL_APPROVAL="false", AUTO_SCHEDULE="true",
+    )
+    created_assets = 0
+
+    def create_video(session, theme, trend_term, query, settings, **kwargs):
+        nonlocal created_assets
+        created_assets += 1
+        asset = VideoAsset(
+            provider="pexels", provider_id=f"catalog-reel-{created_assets}", query=query, title=trend_term,
+            creator="Creator", source="Pexels", license="Pexels License",
+            landing_url="https://www.pexels.com/video/1/", download_url="https://cdn.example/video.mp4",
+            width=720, height=1280, duration_seconds=10, hook=kwargs["script_override"][0],
+            trend_term=trend_term, theme_key=theme, metadata_json={"texts": []},
+        )
+        session.add(asset)
+        session.flush()
+        return asset
+
+    monkeypatch.setattr("app.services.video_service.create_video", create_video)
+    result = tc.run_catalog_reel_auto(db, s, content=_content(CAP))
+
+    assert len(result["created"]) == 10, result["report"]
+    assert db.query(Post).filter(Post.video_asset_id.is_not(None)).count() == 10
+    assert db.query(VideoRenderJob).count() == 10
+    assert all(db.get(Post, post_id).status == "approved" for post_id in result["created"])
+    assert all(row["decision"] == "publicação criada" for row in result["report"] if "decision" in row)
+    from app.services.content_service import ContentService
+    assert ContentService(s).auto_schedule(db) == 10
+    assert all(db.get(Post, post_id).status == "scheduled" for post_id in result["created"])
+
+    again = tc.run_catalog_reel_auto(db, s, content=_content(CAP))
+    assert again["created"] == []
+    assert "meta diária" in again["skipped"]
+
+
 def test_trend_run_disabled_by_default(db):
     from app.services import trend_content as tc
 

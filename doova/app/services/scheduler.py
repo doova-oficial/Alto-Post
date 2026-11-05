@@ -163,13 +163,22 @@ def job_trends_auto() -> Any:
     if not s.trend_auto_enabled:
         return {"skipped": "TREND_AUTO_ENABLED=false"}
     from app.services.trend_content import run_trend_auto
+    from app.services.trend_content import run_catalog_reel_auto
 
     with session_scope() as db:
         if is_paused(db):
             return {"paused": True}
         res = run_trend_auto(db, s)
-        return {"created": res.get("created", []), "evaluated": len(res.get("report", [])),
-                "skipped": res.get("skipped")}
+        catalog = run_catalog_reel_auto(db, s)
+        return {
+            "created": [*res.get("created", []), *catalog.get("created", [])],
+            "trend_created": len(res.get("created", [])),
+            "catalog_created": len(catalog.get("created", [])),
+            "evaluated": len(res.get("report", [])),
+            "skipped": res.get("skipped"),
+            "catalog_skipped": catalog.get("skipped"),
+            "catalog_report": catalog.get("report", []),
+        }
 
 
 def job_watchdog() -> Any:

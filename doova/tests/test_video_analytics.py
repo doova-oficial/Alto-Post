@@ -58,6 +58,32 @@ def test_compute_video_rates_missing_watch_time_is_none():
     assert r["watch_through_rate"] is None
 
 
+def test_dashboard_data_includes_latest_metrics_and_video_characteristics(db, monkeypatch):
+    settings = reload_settings(monkeypatch, ANALYSIS_TARGET_AGE_HOURS="168")
+    asset = _video_asset(db, provider_id="dashboard", published=True,
+                         published_at=utcnow() - timedelta(hours=24))
+    metadata = dict(asset.metadata_json)
+    metadata.update({
+        "android_renderer": "media3",
+        "segments": [{"kind": "stock_video"}, {"kind": "generated_image"}],
+    })
+    asset.metadata_json = metadata
+    db.add(VideoMetricSnapshot(video_id=asset.id, collected_at=utcnow(), age_hours=24,
+                               reach=20, views=0, likes=1, shares=0, avg_watch_time_ms=1500))
+    db.commit()
+
+    dashboard = van.dashboard_data(db, settings)
+    reel = dashboard["reels"][0]
+
+    assert reel["metrics"]["views"] == 0
+    assert reel["metrics"]["reach"] == 20
+    assert reel["comparable"] is False
+    assert reel["segment_mix"] == "generated_image: 1 + stock_video: 1"
+    assert reel["render_mode"] == "Android (Media3)"
+    assert dashboard["dimensions"]["hook"] == "Gancho"
+    assert dashboard["dimensions"]["segment_mix"] == "Composição dos segmentos"
+
+
 # -------------------------------------------------------------- coleta
 def test_collect_video_metrics_skips_unpublished_and_recent(db, monkeypatch):
     s = reload_settings(monkeypatch, META_IG_USER_ID="1", META_ACCESS_TOKEN="IGAA" + "x" * 30)
@@ -80,7 +106,7 @@ def test_collect_video_metrics_skips_unpublished_and_recent(db, monkeypatch):
 
 # ------------------------------------------------------- dataset e dimensões
 def test_build_dataset_excludes_too_young_and_unpublished(db, monkeypatch):
-    s = reload_settings(monkeypatch)
+    s = reload_settings(monkeypatch, ANALYSIS_TARGET_AGE_HOURS="72")
     _video_asset(db, provider_id="draft2", published=False)
     old = _video_asset(db, provider_id="old1", published=True, published_at=utcnow() - timedelta(hours=80))
     young = _video_asset(db, provider_id="young1", published=True, published_at=utcnow() - timedelta(hours=2))
@@ -101,7 +127,7 @@ def test_build_dataset_excludes_too_young_and_unpublished(db, monkeypatch):
 
 
 def test_daily_video_count_bucket_counts_same_local_day(db, monkeypatch):
-    s = reload_settings(monkeypatch)
+    s = reload_settings(monkeypatch, ANALYSIS_TARGET_AGE_HOURS="72")
     # 10:00 e 13:00 UTC caem no mesmo dia em America/Sao_Paulo (UTC-3); o terceiro, no dia seguinte.
     day1a = _video_asset(db, provider_id="day1a", published=True,
                          published_at=datetime(2026, 1, 10, 13, 0, tzinfo=timezone.utc).replace(tzinfo=None))
@@ -133,7 +159,7 @@ def test_compare_video_by_transition(db, monkeypatch):
 
 
 def test_write_video_reports(db, monkeypatch, tmp_path):
-    s = reload_settings(monkeypatch)
+    s = reload_settings(monkeypatch, ANALYSIS_TARGET_AGE_HOURS="72")
     asset = _video_asset(db, provider_id="rep1", published=True, published_at=utcnow() - timedelta(hours=80))
     db.add(VideoMetricSnapshot(video_id=asset.id, collected_at=utcnow(), age_hours=80, reach=400, likes=20,
                                comments=2, shares=1, saved=3, total_interactions=26))

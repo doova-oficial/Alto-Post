@@ -104,6 +104,7 @@ Os testes usam um banco SQLite temporário e simuladores HTTP da Groq e da Meta.
 4. **Agendar.** `POST /api/posts/{id}/schedule` com horário local. Outra opção é `AUTO_SCHEDULE=true`, que ocupa os horários de `POSTING_SLOTS`.
 5. **Publicar.** O agendador publica no horário, uma publicação por ciclo, respeitando os limites. Para publicar na hora, use `POST /api/posts/{id}/publish-now`.
 6. **Medir.** As métricas são coletadas a cada 6 h. Os resultados ficam em:
+   - `/analytics` (painel visual protegido pelo token administrativo);
    - `GET /api/metrics/summary` (resumo);
    - `GET /api/metrics/compare?dimension=title_position` (comparação por dimensão);
    - `POST /api/metrics/reports` (CSV e JSON).
@@ -122,6 +123,7 @@ curl -s -X POST $API/api/posts -H "Authorization: Bearer $TOKEN" -H "Content-Typ
 | Função | Método e rota |
 |---|---|
 | Saúde do serviço | `GET /health` (público) |
+| Analytics visual | `GET /analytics` (painel; os dados exigem `ADMIN_API_TOKEN`) |
 | Imagem servida à Meta | `GET /media/{token}.jpg` (público, token aleatório de 43 caracteres) |
 | Listar templates | `GET /api/templates` |
 | Gerar arte avulsa | `POST /api/art` · `GET /api/art/{id}/image` |
@@ -134,6 +136,7 @@ curl -s -X POST $API/api/posts -H "Authorization: Bearer $TOKEN" -H "Content-Typ
 | Publicar agora | `POST /api/posts/{id}/publish-now` |
 | Histórico | `GET /api/posts/history` |
 | Métricas | `GET /api/metrics/summary` · `GET /api/metrics/posts/{id}` · `POST /api/metrics/collect` · `POST /api/metrics/reports` |
+| Analytics de Reels | `GET /api/videos/metrics/dashboard` · `GET /api/videos/metrics/summary` · `GET /api/videos/metrics/compare` |
 | Comparar | `GET /api/metrics/compare` · `GET /api/experiments/{id}/results` |
 | Experimentos | `POST /api/experiments` · `POST .../{id}/generate` · `POST .../{id}/schedule` |
 | Sugestões de conteúdo | `GET /api/suggestions` · `GET /api/library` |

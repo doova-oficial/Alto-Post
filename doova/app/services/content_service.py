@@ -504,7 +504,7 @@ class ContentService:
         return None
 
     def auto_schedule(self, db: Session, now: datetime | None = None) -> int:
-        """Coloca na fila as aprovadas sem horário. Assuntos do momento vão primeiro."""
+        """Coloca na fila as aprovadas sem horário. Reels e tendências têm prioridade."""
         s = self.settings
         if not s.auto_schedule:
             return 0
@@ -512,7 +512,8 @@ class ContentService:
         posts = list(db.scalars(select(Post).where(Post.status == PostStatus.APPROVED.value,
                                                    Post.scheduled_at.is_(None))).all())
         far = datetime.max
-        posts.sort(key=lambda p: (p.content_kind != ContentKind.TREND.value, p.expires_at or far, p.approved_at or far))
+        posts.sort(key=lambda p: (p.video_asset_id is None, p.content_kind != ContentKind.TREND.value,
+                                  p.expires_at or far, p.approved_at or far))
         n = 0
         for p in posts:
             slot = self.next_free_slot(db, now)

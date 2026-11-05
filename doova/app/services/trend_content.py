@@ -203,6 +203,12 @@ def _recent_count(db: Session, hours: int) -> int:
         Post.content_kind == ContentKind.TREND.value, Post.created_at >= cutoff)) or 0
 
 
+def _recent_reel_count(db: Session, hours: int = 24) -> int:
+    cutoff = utcnow() - timedelta(hours=hours)
+    return db.scalar(select(func.count()).select_from(Post).where(
+        Post.video_asset_id.is_not(None), Post.created_at >= cutoff)) or 0
+
+
 def _recent(db: Session, column, value: str, days: int) -> bool:
     cutoff = utcnow() - timedelta(days=days)
     return db.scalar(select(Post.id).where(column == value, Post.created_at >= cutoff).limit(1)) is not None
@@ -218,7 +224,9 @@ def run_trend_auto(db: Session, settings: Settings | None = None, force: bool = 
     if create and not (s.trend_auto_enabled or force):
         out["skipped"] = "TREND_AUTO_ENABLED=false (use force para rodar manualmente)"
         return out
-    quota = s.trend_auto_max_per_day - _recent_count(db, 24)
+    used = (_recent_reel_count(db) if s.video_enabled and s.video_search_configured
+            else _recent_count(db, 24))
+    quota = s.trend_auto_max_per_day - used
     if create and quota <= 0:
         out["skipped"] = f"limite de {s.trend_auto_max_per_day} publicação(ões) de assunto do momento em 24 h atingido"
         return out
@@ -339,6 +347,96 @@ def run_trend_auto(db: Session, settings: Settings | None = None, force: bool = 
             db.commit()
         row.update(decision="publicação criada", post_id=post.id, template=template,
                    photo_id=photo.id if photo else None)
+        out["created"].append(post.id)
+    return out
+
+
+def run_catalog_reel_auto(db: Session, settings: Settings | None = None,
+                          content: ContentService | None = None) -> dict[str, Any]:
+    """Completa a cota diária com Reels perenes quando as tendências não bastam."""
+    s = settings or get_settings()
+    out: dict[str, Any] = {"created": [], "report": [], "skipped": None}
+    if not s.trend_auto_enabled:
+        out["skipped"] = "TREND_AUTO_ENABLED=false"
+        return out
+    if not (s.video_enabled and s.video_search_configured):
+        out["skipped"] = "vídeos desativados ou sem provedor configurado"
+        return out
+    if s.video_render_mode == "android" and not (
+        s.video_worker_token and len(s.video_worker_token.get_secret_value()) >= 32
+    ):
+        out["skipped"] = "VIDEO_WORKER_TOKEN não configurado (mínimo de 32 caracteres)"
+        return out
+
+    quota = s.trend_auto_max_per_day - _recent_reel_count(db)
+    if quota <= 0:
+        out["skipped"] = f"meta diária de {s.trend_auto_max_per_day} Reels em 24 h atingida"
+        return out
+
+    from app.services import library
+    from app.services.video_service import VideoSearchError, create_video
+    from app.services.video_worker import enqueue_video_render
+
+    cs = content or ContentService(s)
+    themes = library.themes()
+    for key, entry in themes.items():
+        if len(out["created"]) >= quota:
+            break
+        row: dict[str, Any] = {"catalog_theme": key, "topic": entry["topic"]}
+        out["report"].append(row)
+        catalog_key = f"catalog:{key}"
+        if _recent(db, Post.theme_key, catalog_key, 1):
+            row.update(decision="adiado", reason="tema do catálogo publicado nas últimas 24 h")
+            continue
+
+        title = str(entry.get("title") or entry["topic"]).strip()
+        details = [str(value).strip() for value in (entry.get("items") or []) if str(value).strip()]
+        if len(details) < 2:
+            subtitle = str(entry.get("subtitle") or "").strip()
+            details.append(subtitle or str(entry.get("objective") or "Conheça o Doova."))
+        details = details[:2]
+        script_texts = [title[:120], *(value[:180] for value in details),
+                        "Instale o app Doova e encontre ajuda ou ofereça seu serviço."]
+        script_override = (title[:120], script_texts)
+        render = s.video_render_mode != "android"
+        try:
+            video = create_video(
+                db, "autonomos", title, "small business owner working", s,
+                render=render, script_override=script_override, prefer_new=True,
+            )
+        except VideoSearchError as exc:
+            row.update(decision="erro", reason=f"não foi possível gerar Reel: {exc}")
+            logger.warning("Reel do catálogo %s falhou: %s", key, exc)
+            continue
+
+        try:
+            post = cs.create_post(db, PostInput(
+                template_key=entry["template"],
+                overrides=library.theme_overrides(entry),
+                topic=entry["topic"],
+                audience=entry["audience"],
+                objective=entry["objective"],
+                theme_key=catalog_key,
+                campaign_slug="reels-catalogo",
+                content_kind=entry["content_kind"],
+                message_type=entry.get("message_type"),
+                generate_caption=True,
+                extra_context=(
+                    "Conteúdo perene do catálogo oficial do Doova; não apresente como tendência ou notícia. "
+                    "Use apenas os fatos e orientações informados no tema."
+                ),
+            ))
+        except ContentError as exc:
+            row.update(decision="erro", reason=f"não foi possível criar publicação: {exc}")
+            logger.warning("Post de catálogo %s falhou: %s", key, exc)
+            continue
+
+        post.video_asset_id = video.id
+        if not video.video_url:
+            job = enqueue_video_render(db, video)
+            row["video_render_job"] = {"id": job.id, "status": job.status}
+        db.commit()
+        row.update(decision="publicação criada", post_id=post.id, video_id=video.id)
         out["created"].append(post.id)
     return out
 
