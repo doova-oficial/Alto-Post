@@ -287,6 +287,35 @@ def test_script_ends_with_doova_install_cta():
     assert texts[-1] == "Instale o app Doova e encontre ajuda ou ofereça seu serviço."
 
 
+def test_trend_script_uses_observed_context_and_three_second_hook():
+    from app.services.video_service import _script_texts, subtitle_plan
+
+    class ScriptGroq:
+        def __init__(self):
+            self.system = ""
+            self.user = ""
+
+        def chat_json(self, system, user, max_tokens):
+            self.system, self.user = system, user
+            return {"hook": "A chuva revelou esse problema?", "beats": [
+                "Um telhado bem cuidado evita dor de cabeça.",
+                "Encontre profissionais da sua região no Doova.",
+            ]}
+
+    groq = ScriptGroq()
+    hook, rows = subtitle_plan(
+        "chuva", "chuva forte em Iporá", 12,
+        ["Previsão de chuva na região"], groq,
+    )
+
+    assert hook == rows[0]["text"] == "A chuva revelou esse problema?"
+    assert rows[0]["start"] == 0 and rows[0]["end"] == 3
+    assert "Previsão de chuva na região" in groq.user
+    assert "até 3 segundos" in groq.system
+    assert rows[-1]["text"] == "Instale o app Doova e encontre ajuda ou ofereça seu serviço."
+    assert rows[-1]["end"] == 12
+
+
 def test_render_video_sources_builds_cuts_between_placeholders(monkeypatch, tmp_path):
     from app.config import get_settings
     from app.services import video_service

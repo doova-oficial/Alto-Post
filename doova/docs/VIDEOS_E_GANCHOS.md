@@ -50,8 +50,13 @@ Pexels ou Cloudinary.
 Nesse modo, a publicação de tendência fica vinculada ao Reel: o publicador de fotos a ignora,
 e o tick aguarda o upload do celular, a aprovação e o horário agendado. Se o celular estiver
 offline ou a busca do vídeo falhar, a publicação é adiada em vez de publicar a foto sozinha.
-O app renderiza um vídeo-fonte vertical com áudio original e legendas simples; não reproduz
-as transições, a narração TTS nem todas as variantes do renderizador FFmpeg.
+Com `TREND_USE_GROQ=true` e Groq configurada, o servidor envia o termo em alta e até três
+manchetes observadas à IA para gerar um roteiro curto: um gancho nos primeiros três segundos,
+duas falas de contexto e a chamada do Doova. O prompt proíbe inventar fatos ou promessas; as
+manchetes servem apenas como contexto. Se a Groq não estiver habilitada ou falhar, é usado o
+roteiro padrão determinístico. O servidor envia as falas e seus tempos ao app, que renderiza
+um vídeo-fonte vertical com áudio original e legendas simples; não reproduz as transições,
+a narração TTS nem todas as variantes do renderizador FFmpeg.
 Em Android 15 ou superior, o sistema limita o uso contínuo de serviços foreground do tipo
 `dataSync`; se atingir o limite diário, o usuário precisa abrir o app e iniciar o worker
 novamente. A tarefa em andamento será retomada quando o lease expirar.

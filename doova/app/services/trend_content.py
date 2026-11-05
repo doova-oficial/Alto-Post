@@ -287,7 +287,8 @@ def run_trend_auto(db: Session, settings: Settings | None = None, force: bool = 
             try:
                 from app.services.video_service import VideoSearchError, create_video, public
 
-                video = create_video(db, theme, term, term, s, client=client, render=not android_video_mode)
+                video = create_video(db, theme, term, term, s, client=client, render=not android_video_mode,
+                                     trend_context=news[:3], script_groq=groq if use_groq else None)
                 if android_video_mode:
                     linked_video_asset = video
                 if android_video_mode and not video.video_url:
