@@ -170,12 +170,12 @@ def test_trend_run_creates_photo_post_for_review(db, monkeypatch):
     from app.models import Post
     from app.services import trend_content as tc
 
-    s = reload_settings(monkeypatch, TREND_USE_GROQ="false")
+    s = reload_settings(monkeypatch, TREND_USE_GROQ="false", TREND_AUTO_MAX_PER_DAY="1")
     items = [{"term": "Acidente na GO-060", "news": [], "geo": "BR-GO"},
              {"term": "Chuva em Iporá", "news": ["Previsão indica chuva"], "geo": "BR-GO"},
              {"term": "Onda de calor", "news": [], "geo": "BR"}]
     res = tc.run_trend_auto(db, s, force=True, client=_transport([]), content=_content(CAP), items=items)
-    assert len(res["created"]) == 1  # limite padrão: 1 por dia
+    assert len(res["created"]) == 1  # este caso fixa explicitamente o limite em 1 por dia
     decisions = {r["term"]: r["decision"] for r in res["report"]}
     assert decisions["Acidente na GO-060"] == "descartado"
     post = db.get(Post, res["created"][0])
@@ -229,6 +229,41 @@ def test_android_trend_creates_reel_post_without_searching_for_photo(db, monkeyp
     assert post.photo_id is None and post.video_asset_id == asset.id
     assert job.status == "pending"
     assert result["report"][0]["photo_search"]["skipped"] == "Reel substitui a foto"
+
+
+def test_android_trend_can_queue_three_reels_per_day(db, monkeypatch):
+    from app.models import Post, VideoAsset, VideoRenderJob
+    from app.services import trend_content as tc
+
+    s = reload_settings(monkeypatch, TREND_AUTO_MAX_PER_DAY="3", TREND_USE_GROQ="false",
+                        VIDEO_RENDER_MODE="android", PEXELS_API_KEY="test-pexels-key")
+    sequence = iter(range(3))
+
+    def create_video(session, theme, trend_term, *args, **kwargs):
+        index = next(sequence)
+        asset = VideoAsset(
+            provider="pexels", provider_id=f"three-a-day-{index}", query="search", title="Video",
+            creator="Creator", source="Pexels", license="Pexels License",
+            landing_url="https://www.pexels.com/video/1/", download_url="https://cdn.example/video.mp4",
+            width=720, height=1280, duration_seconds=10, hook="Gancho", trend_term=trend_term,
+            theme_key=theme, metadata_json={"texts": [], "duration_seconds": 10},
+        )
+        session.add(asset)
+        session.flush()
+        return asset
+
+    monkeypatch.setattr("app.services.video_service.create_video", create_video)
+    items = [
+        {"term": "Chuva em Iporá", "news": [], "geo": "BR-GO"},
+        {"term": "Onda de calor", "news": [], "geo": "BR"},
+        {"term": "Festa de aniversário", "news": [], "geo": "BR"},
+    ]
+
+    result = tc.run_trend_auto(db, s, force=True, client=_transport([]), content=_content(CAP), items=items)
+
+    assert len(result["created"]) == 3, result["report"]
+    assert db.query(VideoRenderJob).count() == 3
+    assert db.query(Post).filter(Post.video_asset_id.is_not(None)).count() == 3
 
 
 def test_trend_run_disabled_by_default(db):

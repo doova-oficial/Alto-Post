@@ -171,7 +171,7 @@ class Settings(BaseSettings):
     # ------------------------------------------- assuntos do momento (automÃ¡tico)
     trend_auto_enabled: bool = True
     trend_auto_interval_hours: int = Field(default=6, ge=1)
-    trend_auto_max_per_day: int = Field(default=1, ge=1, le=5)
+    trend_auto_max_per_day: int = Field(default=3, ge=1, le=5)
     trend_post_ttl_hours: int = Field(default=48, ge=6, le=240)
     trend_blocklist_extra: str = ""  # palavras proibidas extras, separadas por vírgula
     trend_use_groq: bool = True

@@ -42,7 +42,7 @@ A foto é **ilustrativa**. A legenda é instruída a nunca dizer que ela mostra 
 |---|---|
 | Ver o que o sistema faria agora, sem criar nada | `GET /api/trends/evaluate` |
 | Rodar manualmente | `POST /api/trends/run` ou `python -m app.cli trends-run --force` |
-| Rodar sozinho | `TREND_AUTO_ENABLED=true`. Roda a cada `TREND_AUTO_INTERVAL_HOURS`, com no máximo `TREND_AUTO_MAX_PER_DAY` publicações por dia. |
+| Rodar sozinho | `TREND_AUTO_ENABLED=true`. Roda a cada `TREND_AUTO_INTERVAL_HOURS`, com no máximo `TREND_AUTO_MAX_PER_DAY` publicações por 24 h (padrão: 3). No modo Android, cada Reel aprovado entra na fila de renderização; o total real depende de haver tendências elegíveis. |
 | Buscar fotos à mão | `GET /api/photos/search?q=roof%20repair&provider=openverse` |
 | Importar uma foto escolhida | `POST /api/photos/import` com `{"provider": "openverse", "provider_id": "..."}` |
 | Procurar e importar a primeira foto adequada | `POST /api/photos/find` com `{"query_en": "...", "query_pt": "..."}` |

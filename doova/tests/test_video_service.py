@@ -306,14 +306,64 @@ def test_trend_script_uses_observed_context_and_three_second_hook():
     hook, rows = subtitle_plan(
         "chuva", "chuva forte em Iporá", 12,
         ["Previsão de chuva na região"], groq,
+        [{"hook": "A goteira tem solução?", "theme_match": True,
+          "avg_watch_time_over_duration": 0.72, "shares_over_reach": 0.03, "reach": 500}],
     )
 
     assert hook == rows[0]["text"] == "A chuva revelou esse problema?"
     assert rows[0]["start"] == 0 and rows[0]["end"] == 3
     assert "Previsão de chuva na região" in groq.user
+    assert "A goteira tem solução?" in groq.user
+    assert "observacionais" in groq.user
     assert "até 3 segundos" in groq.system
     assert rows[-1]["text"] == "Instale o app Doova e encontre ajuda ou ofereça seu serviço."
     assert rows[-1]["end"] == 12
+
+
+def test_recent_video_performance_context_requires_three_measured_reels(db):
+    from app.models import VideoAsset, VideoMetricSnapshot
+    from app.services.video_service import _recent_video_performance_context
+
+    for index in range(2):
+        asset = VideoAsset(
+            provider="pexels", provider_id=f"history-{index}", query="roof", title="t", creator="c",
+            source="Pexels", license="Pexels License", landing_url="https://pexels.com/x",
+            download_url="https://pexels.com/x.mp4", width=1080, height=1920, duration_seconds=10,
+            video_url="https://example.com/video.mp4", subtitle_text="", hook=f"gancho-{index}",
+            trend_term="chuva", theme_key="chuva", metadata_json={"instagram_media_id": f"ig-{index}"},
+        )
+        db.add(asset)
+        db.flush()
+        db.add(VideoMetricSnapshot(video_id=asset.id, age_hours=48, reach=100, shares=5,
+                                   avg_watch_time_ms=5000))
+    db.commit()
+
+    assert _recent_video_performance_context(db, "chuva") == []
+
+
+def test_recent_video_performance_context_returns_best_and_worst_reels(db):
+    from app.models import VideoAsset, VideoMetricSnapshot
+    from app.services.video_service import _recent_video_performance_context
+
+    for index, watch_time in enumerate((2000, 4000, 6000)):
+        asset = VideoAsset(
+            provider="pexels", provider_id=f"history-{index}", query="roof", title="t", creator="c",
+            source="Pexels", license="Pexels License", landing_url="https://pexels.com/x",
+            download_url="https://pexels.com/x.mp4", width=1080, height=1920, duration_seconds=10,
+            video_url="https://example.com/video.mp4", subtitle_text="", hook=f"gancho-{index}",
+            trend_term="chuva", theme_key="chuva", metadata_json={"instagram_media_id": f"ig-{index}"},
+        )
+        db.add(asset)
+        db.flush()
+        db.add(VideoMetricSnapshot(video_id=asset.id, age_hours=48, reach=100, shares=index,
+                                   avg_watch_time_ms=watch_time))
+    db.commit()
+
+    context = _recent_video_performance_context(db, "chuva")
+
+    assert {item["hook"] for item in context} == {"gancho-0", "gancho-1", "gancho-2"}
+    assert context[0]["avg_watch_time_over_duration"] == 0.6
+    assert context[-1]["avg_watch_time_over_duration"] == 0.2
 
 
 def test_render_video_sources_builds_cuts_between_placeholders(monkeypatch, tmp_path):

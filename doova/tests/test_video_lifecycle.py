@@ -32,9 +32,22 @@ def test_publish_reel_happy_path(db, monkeypatch):
     meta = FakeMeta()
     result = vs.publish_reel(db, asset, s, meta=meta)
     assert result["status"] == "published"
+    assert "#doova" in meta.last_caption
+    assert "#trabalhoautonomo" in meta.last_caption
+    assert "#empreendedorismo" in meta.last_caption
     db.refresh(asset)
     assert asset.metadata_json["instagram_media_id"] == result["media_id"]
     assert ("create_reel", asset.video_url) in meta.calls
+
+
+def test_publish_reel_adds_hashtags_to_caption_override_without_duplicates(db, monkeypatch):
+    s = reload_settings(monkeypatch, DRY_RUN="false", META_IG_USER_ID="1", META_ACCESS_TOKEN="IGAA" + "x" * 30)
+    asset = _asset(db)
+    meta = FakeMeta()
+
+    vs.publish_reel(db, asset, s, meta=meta, caption_override="Legenda existente #Doova")
+
+    assert meta.last_caption == "Legenda existente #Doova\n\n#trabalhoautonomo #empreendedorismo"
 
 
 def test_publish_reel_already_published_is_idempotent(db, monkeypatch):
@@ -196,7 +209,7 @@ def test_linked_reel_publishes_as_post_not_photo_and_syncs_status(db, monkeypatc
     result = job_video_publish()
 
     assert asset.id in result["published"]
-    assert meta.last_caption == post.caption.text
+    assert meta.last_caption == f"{post.caption.text}\n\n#doova #trabalhoautonomo #empreendedorismo"
     db.refresh(post)
     assert post.status == PostStatus.PUBLISHED.value
     assert post.ig_media_id and post.permalink

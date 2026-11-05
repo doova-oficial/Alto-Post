@@ -114,7 +114,7 @@ services:
       - key: TREND_AUTO_ENABLED
         value: "true"
       - key: TREND_AUTO_MAX_PER_DAY
-        value: "1"
+        value: "3"
 
 databases:
   - name: doova-db

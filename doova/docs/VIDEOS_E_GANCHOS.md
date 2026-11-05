@@ -57,6 +57,13 @@ manchetes servem apenas como contexto. Se a Groq não estiver habilitada ou falh
 roteiro padrão determinístico. O servidor envia as falas e seus tempos ao app, que renderiza
 um vídeo-fonte vertical com áudio original e legendas simples; não reproduz as transições,
 a narração TTS nem todas as variantes do renderizador FFmpeg.
+
+Quando houver pelo menos três Reels publicados com métricas disponíveis há 24 horas ou mais,
+o prompt da Groq também recebe exemplos dos ganchos com melhores e piores sinais de retenção
+(razão entre tempo médio assistido e duração) e compartilhamento (compartilhamentos/alcance).
+São associações observacionais para orientar novos testes, não prova de causalidade. A legenda
+publicada inclui `#doova` e hashtags relacionadas ao tema, sem duplicar tags que já existam.
+
 Em Android 15 ou superior, o sistema limita o uso contínuo de serviços foreground do tipo
 `dataSync`; se atingir o limite diário, o usuário precisa abrir o app e iniciar o worker
 novamente. A tarefa em andamento será retomada quando o lease expirar.
