@@ -22,7 +22,7 @@ def _asset(db):
         width=720,
         height=1280,
         duration_seconds=10,
-        hook="Vai chover?",
+        hook="Encontre ajuda no Doova.",
         trend_term="chuva",
         theme_key="chuva",
         metadata_json={"texts": [{"start": 0, "end": 10, "text": "Encontre ajuda no Doova."}]},
@@ -69,7 +69,11 @@ def test_video_worker_claim_heartbeat_and_complete(client, db, monkeypatch):
         video_worker, "_elevenlabs_audio_with_timestamps",
         lambda text, settings, timeout: (b"ID3 audio", [{"text": "Encontre", "start": 0.0, "end": 0.5}]),
     )
-    monkeypatch.setattr(video_worker, "search_videos", lambda query, settings: [_reaction_candidate()])
+    requested_ids = []
+    monkeypatch.setattr(
+        video_worker, "get_pexels_video",
+        lambda video_id, settings: requested_ids.append(video_id) or _reaction_candidate(),
+    )
     asset = _asset(db)
     queued = enqueue_video_render(db, asset)
     claimed = client.post("/api/video-worker/jobs/claim", headers=_worker_headers(),
@@ -79,10 +83,13 @@ def test_video_worker_claim_heartbeat_and_complete(client, db, monkeypatch):
     assert job["id"] == queued.id and job["video_id"] == asset.id
     assert job["source"]["url"] == asset.download_url
     assert job["render"]["subtitles"] == asset.metadata_json["texts"]
+    assert "hook" not in job["render"]
+    assert job["render"]["subtitles"][0]["text"] == asset.hook
     assert job["render"]["narration_audio_base64"] == "SUQzIGF1ZGlv"
     assert job["render"]["narration_words"] == [{"text": "Encontre", "start": 0.0, "end": 0.5}]
     assert job["reaction_source"]["url"] == "https://cdn.example/reaction.mp4"
     assert job["reaction_source"]["creator"] == "Pexels creator"
+    assert requested_ids == ["15909403"]
 
     heartbeat = client.post(f"/api/video-worker/jobs/{job['id']}/heartbeat",
                             headers=_worker_headers(), json={"worker_id": "phone-1"})
@@ -121,7 +128,7 @@ def test_video_worker_rejects_stale_owner_and_bad_mp4(client, db, monkeypatch):
         video_worker, "_elevenlabs_audio_with_timestamps",
         lambda text, settings, timeout: (b"ID3 audio", [{"text": "Encontre", "start": 0.0, "end": 0.5}]),
     )
-    monkeypatch.setattr(video_worker, "search_videos", lambda query, settings: [_reaction_candidate()])
+    monkeypatch.setattr(video_worker, "get_pexels_video", lambda video_id, settings: _reaction_candidate())
     asset = _asset(db)
     queued = enqueue_video_render(db, asset)
     claim = client.post("/api/video-worker/jobs/claim", headers=_worker_headers(),

@@ -81,7 +81,7 @@ def job_metrics() -> Any:
 
 
 def job_video_publish() -> Any:
-    """Publica Reels renderizados que ainda não foram ao Instagram.
+    """Publica Reels renderizados nos destinos configurados.
 
     Espelha o job_publish de imagens: job_trends_auto gera o asset e, no modo Android,
     o worker externo renderiza o arquivo; este job publica somente Reels prontos e
@@ -90,11 +90,11 @@ def job_video_publish() -> Any:
     s = get_settings()
     if not s.video_auto_publish:
         return {"skipped": "VIDEO_AUTO_PUBLISH=false"}
-    if not s.meta_configured:
-        return {"skipped": "Meta não configurada"}
+    if not s.video_publish_targets:
+        return {"skipped": "nenhuma plataforma de vídeo configurada"}
     from app.services.video_service import (
         VideoPublishError,
-        publish_reel,
+        publish_video_to_targets,
         sync_linked_post_after_reel,
         unpublished_rendered_videos,
     )
@@ -102,8 +102,9 @@ def job_video_publish() -> Any:
     with session_scope() as db:
         if is_paused(db):
             return {"paused": True}
-        pending = unpublished_rendered_videos(db)
-        published, errors, deferred = [], [], []
+        targets = s.video_publish_targets
+        pending = unpublished_rendered_videos(db, targets=targets)
+        published, errors, deferred, processing = [], [], [], []
         for asset in pending:
             linked_post = db.scalar(select(Post).where(Post.video_asset_id == asset.id))
             if linked_post is not None:
@@ -121,16 +122,25 @@ def job_video_publish() -> Any:
                     errors.append({"video_id": asset.id, "error": "publicação vinculada sem legenda válida"})
                     continue
             try:
-                result = publish_reel(db, asset, s,
-                                      caption_override=linked_post.caption.text if linked_post else None)
+                result = publish_video_to_targets(
+                    db, asset, s, caption_override=linked_post.caption.text if linked_post else None,
+                    platforms=targets,
+                )
             except VideoPublishError as e:
                 errors.append({"video_id": asset.id, "error": str(e)[:300]})
                 continue
             sync_linked_post_after_reel(db, asset, result)
             result_status = result.get("status")
-            if result_status in ("published", "already_published"):
+            if result_status == "published":
                 published.append(asset.id)
-        return {"published": published, "errors": errors, "deferred": deferred, "eligible": len(pending)}
+            elif result_status == "processing":
+                processing.append({"video_id": asset.id, "platforms": result["platforms"]})
+            elif result_status == "partial":
+                errors.append({"video_id": asset.id, "platforms": result["platforms"]})
+            elif result_status == "failed":
+                errors.append({"video_id": asset.id, "platforms": result["platforms"]})
+        return {"published": published, "processing": processing, "errors": errors,
+                "deferred": deferred, "eligible": len(pending), "targets": targets}
 
 
 def job_video_metrics() -> Any:

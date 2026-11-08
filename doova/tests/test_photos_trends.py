@@ -193,7 +193,7 @@ def test_android_trend_does_not_fall_back_to_photo_without_video_provider(db, mo
     from app.services import trend_content as tc
 
     s = reload_settings(monkeypatch, TREND_USE_GROQ="false", VIDEO_RENDER_MODE="android",
-                        PEXELS_API_KEY="", PIXABAY_API_KEY="")
+                        PEXELS_API_KEY="", PIXABAY_API_KEY="test-pixabay-key")
     items = [{"term": "Chuva em Iporá", "news": [], "geo": "BR-GO"}]
 
     result = tc.run_trend_auto(db, s, force=True, client=_transport([]), content=_content(CAP), items=items)

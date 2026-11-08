@@ -26,6 +26,7 @@ from app.database import utcnow
 from app.models import Post, PostStatus, VideoAsset, VideoMetricSnapshot
 
 PEXELS_VIDEO_URL = "https://api.pexels.com/v1/videos/search"
+PEXELS_VIDEO_DETAILS_URL = "https://api.pexels.com/v1/videos/videos"
 PIXABAY_VIDEO_URL = "https://pixabay.com/api/videos/"
 logger = logging.getLogger("app")
 
@@ -311,7 +312,8 @@ def _extract_context_frame(source: Path, out_path: Path, settings: Settings) -> 
 
 def _generate_video_image(theme: str, trend_term: str, text: str, out_path: Path,
                           settings: Settings, index: int, variant: str = "clean_center",
-                          background_path: Path | None = None) -> None:
+                          background_path: Path | None = None,
+                          show_script_text: bool = True) -> None:
     """Gera um criativo deterministico com layout/fatores mensuraveis.
 
     Nao usa IA generativa: cada variante e um esqueleto de campanha repetivel,
@@ -343,6 +345,11 @@ def _generate_video_image(theme: str, trend_term: str, text: str, out_path: Path
     else:
         label_font = body_font = footer_font = ImageFont.load_default()
     margin = max(56, width // 12)
+    if not show_script_text:
+        _brand_chip(draw, margin, label_font, footer_font, theme, trend_term)
+        _cta_bar(draw, width, height, margin, footer_font)
+        image.save(out_path, format="PNG", optimize=True)
+        return
     body = _wrap_video_image_text(draw, text, body_font, width - 2 * margin - 80)
 
     if variant in ("context_photo_bottom", "photo_scrim_top"):
@@ -512,6 +519,40 @@ def _pexels_candidate(raw: dict[str, Any], query: str) -> VideoCandidate | None:
             int(item.get("height") or 0), float(raw.get("duration") or 0), query,
         )
     return None
+
+
+def get_pexels_video(video_id: str, settings: Settings | None = None,
+                     client: httpx.Client | None = None) -> VideoCandidate:
+    s = settings or get_settings()
+    if not s.pexels_configured:
+        raise VideoSearchError("PEXELS_API_KEY e necessaria para buscar o vídeo de reação")
+    if not video_id.isdigit():
+        raise ValueError("ID de vídeo Pexels inválido")
+    c, own = _client(s, client)
+    try:
+        try:
+            response = c.get(
+                f"{PEXELS_VIDEO_DETAILS_URL}/{video_id}",
+                headers={"Authorization": s.pexels_api_key.get_secret_value()},
+                timeout=s.video_timeout_seconds,
+            )
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            raise VideoSearchError(f"Falha ao buscar vídeo Pexels {video_id}: {type(e).__name__}") from e
+        if response.status_code != 200:
+            raise VideoSearchError(f"Falha ao buscar vídeo Pexels {video_id}: HTTP {response.status_code}")
+        try:
+            payload = response.json()
+        except ValueError as e:
+            raise VideoSearchError(f"Resposta inválida ao buscar vídeo Pexels {video_id}") from e
+        if not isinstance(payload, dict) or str(payload.get("id")) != video_id:
+            raise VideoSearchError(f"Vídeo Pexels {video_id} não encontrado")
+        candidate = _pexels_candidate(payload, f"Pexels video {video_id}")
+        if candidate is None:
+            raise VideoSearchError(f"Vídeo Pexels {video_id} não tem arquivo MP4 adequado")
+        return candidate
+    finally:
+        if own:
+            c.close()
 
 
 def _search_pexels(query: str, settings: Settings, client: httpx.Client) -> list[VideoCandidate]:
@@ -1368,7 +1409,8 @@ def create_video(db: Session, theme: str, trend_term: str, query: str, settings:
         for index in range(generated_count):
             generated = root / f"generated-{index}.png"
             _generate_video_image(theme, trend_term, generated_texts[index], generated, s, index,
-                                  variant=chosen_variant, background_path=context_frame)
+                                  variant=chosen_variant, background_path=context_frame,
+                                  show_script_text=False)
             insertion = min(len(source_items), 1 + index * 2)
             source_items.insert(insertion, {
                 "path": generated,
@@ -1526,10 +1568,114 @@ def publish_reel(db: Session, asset: VideoAsset, settings: Settings | None = Non
         raise VideoPublishError(f"falha na publicação do Reel: {exc}") from exc
 
 
+def publish_video_to_targets(db: Session, asset: VideoAsset, settings: Settings | None = None,
+                             caption_override: str | None = None, platforms: list[str] | None = None,
+                             force: bool = False) -> dict[str, Any]:
+    """Publica o mesmo arquivo em todos os destinos configurados, sem compartilhar estado entre APIs."""
+    from app.services.social_video_publishers import (
+        FacebookReelPublisher,
+        SocialVideoPublishError,
+        TikTokVideoPublisher,
+    )
+
+    s = settings or get_settings()
+    targets = platforms if platforms is not None else s.video_publish_targets
+    if len(set(targets)) != len(targets):
+        raise VideoPublishError("plataformas duplicadas na solicitação", status=422)
+    unknown = set(targets) - {"instagram", "facebook", "tiktok"}
+    if unknown:
+        raise VideoPublishError(f"plataformas inválidas: {', '.join(sorted(unknown))}", status=422)
+    unavailable = set(targets) - set(s.video_publish_targets)
+    if unavailable:
+        raise VideoPublishError(
+            f"plataformas sem credenciais configuradas: {', '.join(sorted(unavailable))}", status=503
+        )
+    if not targets:
+        raise VideoPublishError("configure credenciais para Instagram, Facebook ou TikTok", status=503)
+    if not asset.video_url:
+        raise VideoPublishError("o Reel ainda não foi renderizado ou enviado ao Cloudinary", status=409)
+
+    caption = caption_override or (
+        f"{asset.hook or asset.trend_term}\n\n{asset.trend_term}\n\nEncontre profissionais e serviços no Doova."
+    )
+    caption = _reel_caption_with_hashtags(caption, asset.theme_key)
+    metadata = dict(asset.metadata_json or {})
+    context = metadata.get("context_image") or {}
+    if context.get("license") == "by":
+        caption += (f"\n\nImagem de apoio: {context.get('title') or 'imagem ilustrativa'}, "
+                    f"por {context.get('creator') or 'autor não informado'}. "
+                    f"Origem: {context.get('landing_url') or 'Openverse'}. Licença CC BY; imagem adaptada.")
+
+    results: dict[str, dict[str, Any]] = {}
+    for platform in targets:
+        if platform == "instagram":
+            try:
+                results[platform] = publish_reel(
+                    db, asset, s, caption_override=caption_override,
+                )
+            except VideoPublishError as exc:
+                results[platform] = {"status": "error", "error": str(exc)}
+            continue
+        metadata = dict(asset.metadata_json or {})
+        if s.dry_run:
+            results[platform] = {"status": "simulated", "message": "DRY_RUN=true"}
+            continue
+        publisher = None
+        try:
+            publisher = FacebookReelPublisher(s) if platform == "facebook" else TikTokVideoPublisher(s)
+            if force and metadata.get(f"{platform}_status") == "failed":
+                metadata.pop(f"{platform}_video_id" if platform == "facebook" else f"{platform}_publish_id", None)
+                metadata.pop(f"{platform}_status", None)
+            if metadata.get(f"{platform}_status") == "failed" and not force:
+                results[platform] = {"status": "failed", "error": metadata.get(f"{platform}_error", "")}
+                continue
+            result = publisher.publish(asset.video_url, caption, metadata)
+            results[platform] = result
+            metadata[f"{platform}_status"] = result["status"]
+            metadata.pop(f"{platform}_error", None)
+            if platform == "facebook" and result.get("video_id"):
+                metadata["facebook_video_id"] = result["video_id"]
+                metadata["facebook_permalink"] = result.get("permalink")
+            elif platform == "tiktok":
+                if result.get("publish_id"):
+                    metadata["tiktok_publish_id"] = result["publish_id"]
+                if result.get("post_id"):
+                    metadata["tiktok_post_id"] = result["post_id"]
+        except SocialVideoPublishError as exc:
+            results[platform] = {"status": "error", "error": str(exc)}
+            metadata[f"{platform}_status"] = "failed"
+            metadata[f"{platform}_error"] = str(exc)[:500]
+        finally:
+            if publisher is not None:
+                publisher.close()
+        asset.metadata_json = metadata
+        db.commit()
+
+    statuses = {result["status"] for result in results.values()}
+    if statuses and statuses <= {"published", "already_published"}:
+        overall = "published"
+    elif statuses == {"simulated"}:
+        overall = "simulated"
+    elif "processing" in statuses:
+        overall = "processing"
+    elif "published" in statuses or "already_published" in statuses:
+        overall = "partial"
+    else:
+        overall = "failed"
+    return {"status": overall, "platforms": results}
+
+
 def sync_linked_post_after_reel(db: Session, asset: VideoAsset, result: dict[str, Any]) -> None:
     """Sincroniza o estado do post associado depois de publicar ou simular seu Reel."""
+    platform_results = result.get("platforms")
+    instagram_result = platform_results.get("instagram", {}) if isinstance(platform_results, dict) else result
     result_status = result.get("status")
-    if result_status not in ("published", "already_published", "simulated"):
+    successful = {"published", "already_published", "simulated"}
+    platform_statuses = {
+        item.get("status") for item in platform_results.values()
+    } if isinstance(platform_results, dict) else {result_status}
+    any_success = bool(platform_statuses & successful)
+    if result_status not in ("published", "already_published", "simulated", "partial", "failed"):
         return
     post = db.scalar(select(Post).where(Post.video_asset_id == asset.id))
     if post is None or post.status != PostStatus.SCHEDULED.value:
@@ -1537,27 +1683,41 @@ def sync_linked_post_after_reel(db: Session, asset: VideoAsset, result: dict[str
 
     from app.services.content_service import set_status
 
+    if result_status == "failed":
+        set_status(db, post, PostStatus.FAILED, "Falha na publicação do Reel em todos os destinos configurados")
+        db.commit()
+        return
+    if not any_success:
+        return
     post.published_at = utcnow()
-    post.ig_media_id = result.get("media_id") or post.ig_media_id
-    post.permalink = result.get("permalink") or post.permalink
+    post.ig_media_id = instagram_result.get("media_id") or post.ig_media_id
+    post.permalink = instagram_result.get("permalink") or post.permalink
     final_status = PostStatus.SIMULATED if result_status == "simulated" else PostStatus.PUBLISHED
-    message = ("Reel publicado pelo agendador" if final_status == PostStatus.PUBLISHED
-               else "Reel simulado (DRY_RUN=true)")
+    message = ("Reel publicado parcialmente; confira o estado de cada destino"
+               if result_status == "partial" else
+               "Reel publicado pelo agendador" if final_status == PostStatus.PUBLISHED else
+               "Reel simulado (DRY_RUN=true)")
     set_status(db, post, final_status, message)
     db.commit()
 
 
-def unpublished_rendered_videos(db: Session, limit: int = 20) -> list[VideoAsset]:
-    """Reels renderizados (têm ``video_url``) que ainda não foram publicados no Instagram.
+def unpublished_rendered_videos(db: Session, limit: int = 20,
+                                targets: list[str] | None = None) -> list[VideoAsset]:
+    """Reels renderizados que ainda têm algum destino pendente.
 
-    Usado pelo job automático de publicação — ``instagram_media_id`` só existe em
-    ``metadata_json`` depois de publicado, então filtramos em Python (JSON não é
-    indexável de forma portátil entre SQLite e Postgres aqui).
+    Os estados ficam em JSON por plataforma, filtrado em Python para manter compatibilidade
+    entre SQLite e Postgres.
     """
     assets = db.scalars(
         select(VideoAsset).where(VideoAsset.video_url.is_not(None)).order_by(VideoAsset.created_at)
     ).all()
-    out = [a for a in assets if not (a.metadata_json or {}).get("instagram_media_id")]
+    target_keys = targets or ["instagram"]
+    out = [
+        asset for asset in assets
+        if any((asset.metadata_json or {}).get(f"{target}_status") not in {"published", "failed"}
+               and not (target == "instagram" and (asset.metadata_json or {}).get("instagram_media_id"))
+               for target in target_keys)
+    ]
     return out[:limit]
 
 
@@ -1614,5 +1774,9 @@ def public(asset: VideoAsset, base_url: str = "") -> dict[str, Any]:
             "context_image": (asset.metadata_json or {}).get("context_image"),
             "instagram_published": bool((asset.metadata_json or {}).get("instagram_media_id")),
             "instagram_permalink": (asset.metadata_json or {}).get("instagram_permalink"),
+            "facebook_status": (asset.metadata_json or {}).get("facebook_status"),
+            "facebook_permalink": (asset.metadata_json or {}).get("facebook_permalink"),
+            "tiktok_status": (asset.metadata_json or {}).get("tiktok_status"),
+            "tiktok_post_id": (asset.metadata_json or {}).get("tiktok_post_id"),
             "rendered": bool(asset.video_url or asset.mp4_bytes),
             "video_url": asset.video_url or f"{base_url}/api/videos/{asset.id}/file"}

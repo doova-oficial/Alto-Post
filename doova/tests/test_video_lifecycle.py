@@ -154,6 +154,70 @@ def test_job_video_publish_publishes_pending_reels(db, monkeypatch):
     assert asset.metadata_json["instagram_media_id"]
 
 
+def test_job_video_publish_works_with_facebook_without_instagram_credentials(db, monkeypatch):
+    reload_settings(
+        monkeypatch,
+        VIDEO_AUTO_PUBLISH="true",
+        DRY_RUN="false",
+        META_IG_USER_ID="",
+        META_ACCESS_TOKEN="",
+        FACEBOOK_PAGE_ID="page-123",
+        FACEBOOK_PAGE_ACCESS_TOKEN="page-token",
+    )
+    asset = _asset(db, provider_id="facebook-only")
+
+    class FacebookPublisher:
+        def __init__(self, settings):
+            assert settings.facebook_configured
+
+        def publish(self, video_url, caption, metadata):
+            assert video_url == asset.video_url
+            assert "#doova" in caption
+            return {"status": "published", "video_id": "fb-video-1",
+                    "permalink": "https://facebook.com/reel/fb-video-1"}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "app.services.social_video_publishers.FacebookReelPublisher", FacebookPublisher,
+    )
+    from app.services.scheduler import job_video_publish
+
+    result = job_video_publish()
+
+    assert result["targets"] == ["facebook"]
+    assert result["published"] == [asset.id]
+    db.refresh(asset)
+    assert asset.metadata_json["facebook_status"] == "published"
+    assert asset.metadata_json["facebook_video_id"] == "fb-video-1"
+    assert not asset.metadata_json.get("instagram_media_id")
+
+
+def test_video_publish_endpoint_allows_selecting_a_configured_destination(client, db, monkeypatch, auth):
+    reload_settings(
+        monkeypatch,
+        DRY_RUN="true",
+        META_IG_USER_ID="",
+        META_ACCESS_TOKEN="",
+        FACEBOOK_PAGE_ID="page-123",
+        FACEBOOK_PAGE_ACCESS_TOKEN="page-token",
+    )
+    asset = _asset(db, provider_id="manual-facebook")
+
+    response = client.post(
+        f"/api/videos/{asset.id}/publish",
+        headers=auth,
+        json={"platforms": ["facebook"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "simulated",
+        "platforms": {"facebook": {"status": "simulated", "message": "DRY_RUN=true"}},
+    }
+
+
 def test_linked_reel_waits_for_post_schedule_and_uses_post_caption(db, monkeypatch):
     reload_settings(monkeypatch, VIDEO_AUTO_PUBLISH="true", DRY_RUN="false", META_IG_USER_ID="1",
                     META_ACCESS_TOKEN="IGAA" + "x" * 30)

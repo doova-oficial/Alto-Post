@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     s = get_settings()
     app = FastAPI(
-        title="Doova — Automação de Marketing no Instagram",
+        title="Doova — Automação de Marketing",
         version=__version__,
         description=("API administrativa: gere artes, legendas, publicações, experimentos e relatórios. "
                      "Clique em **Authorize** e informe o ADMIN_API_TOKEN."),

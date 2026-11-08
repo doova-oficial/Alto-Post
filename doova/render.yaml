@@ -47,6 +47,14 @@ services:
         sync: false
       - key: META_APP_SECRET
         sync: false
+      - key: FACEBOOK_PAGE_ID
+        sync: false
+      - key: FACEBOOK_PAGE_ACCESS_TOKEN
+        sync: false
+      - key: TIKTOK_ACCESS_TOKEN
+        sync: false
+      - key: TIKTOK_PRIVACY_LEVEL
+        value: SELF_ONLY
       - key: DRY_RUN
         value: "false"
       - key: REQUIRE_MANUAL_APPROVAL

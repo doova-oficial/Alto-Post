@@ -4,7 +4,7 @@ Sistema em Python para o perfil do **Doova**, um marketplace de trabalhos inform
 
 - gera artes profissionais com Pillow, sem IA;
 - escreve legendas com a API da Groq;
-- publica pela API oficial do Instagram (Meta Graph API);
+- publica pela API oficial do Instagram e, se configurado, também em Páginas do Facebook e no TikTok;
 - mede os resultados e compara variações de layout com experimentos controlados.
 
 Por padrão o sistema roda em **modo automático** (`REQUIRE_MANUAL_APPROVAL=false`): cria, confere, aprova, agenda no melhor horário e publica sozinho, e avisa você quando algo precisa de atenção. Ele começa em **modo de simulação** (`DRY_RUN=true`): nada vai ao Instagram até você trocar para `DRY_RUN=false`. Veja [docs/MODO_AUTOMATICO.md](docs/MODO_AUTOMATICO.md). Para voltar a revisar tudo antes, use `REQUIRE_MANUAL_APPROVAL=true`.

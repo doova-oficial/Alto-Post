@@ -44,6 +44,27 @@ no `render.yaml`; aumente-os somente se houver memória disponível.
 - Se o mesmo vídeo de stock já tiver sido usado, envie `"force":true` para re-renderizar o teste; sem isso o fluxo continua idempotente e devolve o vídeo existente.
 - `GET /api/videos/{id}` retorna o roteiro SRT, o gancho e a origem.
 - `GET /api/videos/{id}/file` serve o MP4 pronto.
+- `POST /api/videos/{id}/publish` publica nos destinos com credenciais configuradas. Envie, por exemplo,
+  `{"platforms":["facebook","tiktok"]}` para escolher destinos ou `{"platforms":["facebook"],"force":true}`
+  para tentar novamente uma publicação que falhou.
+
+### Publicação multiplataforma
+
+O MP4 renderizado é reutilizado; cada rede recebe uma publicação e um estado independentes.
+O agendador publica nos destinos cujas credenciais estejam configuradas (Instagram, Facebook e/ou TikTok)
+quando `VIDEO_AUTO_PUBLISH=true`. Falha em uma plataforma não apaga o resultado das outras.
+`GET /api/videos/{id}` informa `facebook_status` e `tiktok_status`.
+
+Para Facebook, configure `FACEBOOK_PAGE_ID` e um token de acesso da Página em
+`FACEBOOK_PAGE_ACCESS_TOKEN`, concedido por uma pessoa com a tarefa `CREATE_CONTENT` e as permissões
+`pages_manage_posts`, `pages_read_engagement` e `pages_show_list`. A API publica Reels somente em Páginas.
+
+Para TikTok, configure `TIKTOK_ACCESS_TOKEN` de uma conta que autorizou o app com `video.publish` aprovado.
+O sistema consulta as opções de privacidade da conta antes de iniciar cada post; `TIKTOK_PRIVACY_LEVEL`
+precisa corresponder a uma delas. O padrão é `SELF_ONLY`; defina `PUBLIC_TO_EVERYONE` explicitamente para
+publicação pública. O token de usuário pode expirar e precisa ser renovado conforme o ciclo OAuth do TikTok.
+Apps sem auditoria de publicação podem ter posts limitados à visibilidade privada. Credenciais ausentes
+simplesmente desabilitam aquele destino; não impedem os outros.
 
 No modo de renderização `server`, o processamento automático de `POST /api/trends/run` também tenta gerar um vídeo para
 cada tendência aprovada. Se a API de vídeos estiver indisponível, a publicação com foto não é perdida: o relatório
@@ -66,13 +87,15 @@ manchetes observadas à IA para gerar um roteiro curto: um gancho nos primeiros 
 duas falas de contexto e a chamada do Doova. O prompt proíbe inventar fatos ou promessas; as
 manchetes servem apenas como contexto. Se a Groq não estiver habilitada ou falhar, é usado o
 roteiro padrão determinístico. O servidor envia as falas e seus tempos ao app, que renderiza
-um Reel em tela dividida: o vídeo original fica na metade superior e um clipe de pessoa
-usando celular com expressão de surpresa/reação, buscado no banco de vídeos configurado,
+um Reel em tela dividida: o vídeo original fica na metade superior e o vídeo Pexels
+[a-woman-is-laughing-while-holding-a-phone-15909403](https://www.pexels.com/video/a-woman-is-laughing-while-holding-a-phone-15909403/)
 fica na metade inferior. A reação é uma cena ilustrativa de banco, não uma reação real ao
-conteúdo. O servidor solicita a narração ao ElevenLabs e envia ao app o áudio e o alinhamento
-palavra a palavra. O worker remove o som dos dois clipes, usa a narração e destaca a palavra
-falada em amarelo, com contorno preto e as demais palavras em branco. Assim, a legenda
-acompanha o áudio efetivamente gerado. O modo Android requer `ELEVENLABS_API_KEY` e
+conteúdo. Esse modo exige `PEXELS_API_KEY`. O servidor solicita a narração ao ElevenLabs e
+envia ao app o áudio e o alinhamento palavra a palavra. O worker remove o som dos dois clipes,
+usa a narração e destaca a palavra falada em amarelo, com contorno preto e as demais palavras
+em branco. O texto do gancho também está na primeira linha das legendas, então o servidor o
+envia uma única vez para evitar sobreposição no app. Assim, a legenda acompanha o áudio
+efetivamente gerado. O modo Android requer `ELEVENLABS_API_KEY` e
 `ELEVENLABS_VOICE_ID` no servidor, além do banco de vídeos já configurado. Se não encontrar
 um clipe de reação ou o áudio falhar, a tarefa reporta erro em vez de gerar um Reel incompleto.
 O app não reproduz as transições nem todas as variantes do renderizador FFmpeg.

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import shutil
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,7 +17,7 @@ from app.security import AdminDep, GenerationLimit
 from app.services.trend_content import TREND_THEMES, match_theme
 from app.services.video_service import (VIDEO_CREATIVE_SPECS, VIDEO_TRANSITIONS, VideoDeleteError,
                                         VideoPublishError, VideoSearchError, create_video, delete_video,
-                                        public, publish_reel, search_videos,
+                                        public, publish_video_to_targets, search_videos,
                                         sync_linked_post_after_reel)
 from app.services.video_worker import enqueue_video_render
 
@@ -41,6 +41,19 @@ class VideoTrendRequest(BaseModel):
 class VideoCheckRequest(BaseModel):
     trend_term: str = Field(min_length=2, max_length=200)
     theme_key: str | None = Field(default=None, max_length=80)
+
+
+class VideoPublishRequest(BaseModel):
+    platforms: list[str] | None = Field(default=None, max_length=3)
+    force: bool = False
+
+    @field_validator("platforms")
+    @classmethod
+    def validate_platforms(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and (len(value) != len(set(value))
+                                  or set(value) - {"instagram", "facebook", "tiktok"}):
+            raise ValueError("use destinos únicos: instagram, facebook, tiktok")
+        return value
 
 
 def _theme(req: VideoTrendRequest) -> str:
@@ -107,28 +120,28 @@ def video_from_trend(req: VideoTrendRequest, db: Session = Depends(get_db)):
     except VideoSearchError as e:
         raise HTTPException(502, str(e))
     should_publish = settings.video_auto_publish if req.publish_to_instagram is None else req.publish_to_instagram
+    targets = None
+    if req.publish_to_instagram is True and targets is None:
+        targets = ["instagram"]
     result = public(asset)
     if remote and not asset.video_url:
         job = enqueue_video_render(db, asset)
         result["render_job"] = {"id": job.id, "status": job.status}
-        result["instagram_publication"] = {"status": "waiting_for_render"}
+        result["platform_publication"] = {
+            "status": "waiting_for_render",
+            "targets": targets if targets is not None else settings.video_publish_targets,
+        }
     elif should_publish and req.render:
-        result["instagram_publication"] = _publish_reel(asset, db, settings)
+        result["platform_publication"] = _publish_video(
+            asset, db, settings, platforms=targets,
+        )
     return result
 
 
-def _publish_reel(asset: VideoAsset, db: Session, settings=None,
-                  caption_override: str | None = None) -> dict:
-    """Wrapper fino: a lógica real mora em video_service.publish_reel (reaproveitada pelo job automático)."""
-    try:
-        return publish_reel(db, asset, settings, caption_override=caption_override)
-    except VideoPublishError as e:
-        raise HTTPException(e.status, str(e)) from e
-
-
 @router.post("/videos/{video_id}/publish", tags=["vídeos"],
-             summary="Publicar um Reel já renderizado no Instagram")
-def publish_video_now(video_id: str, db: Session = Depends(get_db)):
+             summary="Publicar um Reel nos destinos configurados")
+def publish_video_now(video_id: str, req: VideoPublishRequest = Body(default=VideoPublishRequest()),
+                      db: Session = Depends(get_db)):
     asset = db.get(VideoAsset, video_id)
     if asset is None:
         raise HTTPException(404, "vídeo não encontrado")
@@ -143,9 +156,22 @@ def publish_video_now(video_id: str, db: Session = Depends(get_db)):
         if post.caption is None or not post.caption.is_valid:
             raise HTTPException(409, "a publicação vinculada não possui legenda válida")
         caption = post.caption.text
-    result = _publish_reel(asset, db, caption_override=caption)
+    result = _publish_video(
+        asset, db, caption_override=caption, platforms=req.platforms, force=req.force,
+    )
     sync_linked_post_after_reel(db, asset, result)
     return result
+
+
+def _publish_video(asset: VideoAsset, db: Session, settings=None,
+                   caption_override: str | None = None, platforms: list[str] | None = None,
+                   force: bool = False) -> dict:
+    try:
+        return publish_video_to_targets(
+            db, asset, settings, caption_override=caption_override, platforms=platforms, force=force,
+        )
+    except VideoPublishError as e:
+        raise HTTPException(e.status, str(e)) from e
 
 
 @router.get("/videos/factors", tags=["vídeos"],

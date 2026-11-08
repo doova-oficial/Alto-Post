@@ -276,8 +276,13 @@ def run_trend_auto(db: Session, settings: Settings | None = None, force: bool = 
             row.update(decision="aproveitável", reason="limite diário atingido nesta rodada")
             continue
         android_video_mode = s.video_render_mode == "android"
-        if android_video_mode and not (s.video_enabled and s.video_search_configured):
-            row.update(decision="adiado", reason="Reel no Android exige vídeo habilitado e provedor configurado")
+        if android_video_mode and not (
+            s.video_enabled and s.video_search_configured and s.pexels_configured
+        ):
+            row.update(
+                decision="adiado",
+                reason="Reel no Android exige vídeo habilitado, provedor configurado e PEXELS_API_KEY",
+            )
             continue
         pending_video_asset = None
         linked_video_asset = None

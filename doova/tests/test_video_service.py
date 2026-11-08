@@ -58,6 +58,27 @@ def test_search_videos_prefers_pexels(monkeypatch):
     assert candidates[0].width == 1080
 
 
+def test_get_pexels_video_fetches_requested_id(monkeypatch):
+    from app.config import get_settings, reset_settings_cache
+    from app.services.video_service import get_pexels_video
+
+    monkeypatch.setenv("PEXELS_API_KEY", "pexels-test-key")
+    reset_settings_cache()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "api.pexels.com"
+        assert request.url.path == "/v1/videos/videos/15909403"
+        assert request.headers["Authorization"] == "pexels-test-key"
+        return httpx.Response(200, json={**_pexels_video(), "id": 15909403})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        candidate = get_pexels_video("15909403", get_settings(), client=client)
+
+    assert candidate.provider == "pexels"
+    assert candidate.provider_id == "15909403"
+    assert candidate.download_url.endswith("hd.mp4")
+
+
 def test_search_videos_falls_back_to_pixabay_when_pexels_is_empty(monkeypatch):
     from app.config import reset_settings_cache
     from app.services.video_service import search_videos
@@ -301,6 +322,54 @@ def test_generated_video_image_is_created_dynamically(tmp_path):
     assert output.exists()
     with Image.open(output) as image:
         assert image.size == (get_settings().video_width, get_settings().video_height)
+
+
+def test_generated_image_omits_script_text_when_subtitles_are_rendered(db, monkeypatch, tmp_path):
+    from PIL import ImageDraw
+
+    from app.config import get_settings
+    from app.services import video_service
+
+    candidate = video_service.VideoCandidate(
+        provider="pexels",
+        provider_id="test-video",
+        title="Test video",
+        creator="Pexels",
+        landing_url="https://www.pexels.com/video/1/",
+        download_url="https://cdn.example/video.mp4",
+        width=1080,
+        height=1920,
+        duration=12,
+        query="chuva",
+    )
+    monkeypatch.setattr(video_service, "search_videos", lambda *args, **kwargs: [candidate])
+    monkeypatch.setattr(video_service, "_download", lambda _candidate, _settings, _client, path: path.write_bytes(b"video"))
+    monkeypatch.setattr(
+        ImageDraw.ImageDraw,
+        "multiline_text",
+        lambda *args, **kwargs: pytest.fail("generated image repeated text already present in subtitles"),
+    )
+
+    asset = video_service.create_video(
+        db,
+        "chuva",
+        "chuva",
+        "chuva",
+        get_settings(),
+        render=False,
+        variant="clean_center",
+        transition="fade",
+        generated_image_count=1,
+        script_override=("Gancho", [
+            "Gancho",
+            "Tem alguém que sabe resolver.",
+            "Encontre serviços no Doova.",
+            "Instale o app Doova e encontre ajuda ou ofereça seu serviço.",
+        ]),
+    )
+
+    assert asset.metadata_json["generated_image_count"] == 1
+    assert asset.metadata_json["texts"][1]["text"] == "Tem alguém que sabe resolver."
 
 
 def test_ffmpeg_uses_image_loop_for_generated_cards(tmp_path):

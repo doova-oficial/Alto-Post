@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     meta_app_secret: SecretStr | None = None
     meta_timeout_seconds: float = Field(default=30.0, gt=0)
     public_base_url: str | None = None  # URL pública HTTPS deste serviço (Meta baixa a imagem daqui)
+    facebook_page_id: str | None = None
+    facebook_page_access_token: SecretStr | None = None
+    tiktok_access_token: SecretStr | None = None
+    tiktok_privacy_level: Literal[
+        "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"
+    ] = "SELF_ONLY"
 
     # ------------------------------------------------------------ publicação
     dry_run: bool = True
@@ -195,6 +201,26 @@ class Settings(BaseSettings):
         return bool(self.meta_ig_user_id and self.meta_access_token and self.meta_access_token.get_secret_value())
 
     @property
+    def facebook_configured(self) -> bool:
+        return bool(self.facebook_page_id and self.facebook_page_access_token
+                    and self.facebook_page_access_token.get_secret_value())
+
+    @property
+    def tiktok_configured(self) -> bool:
+        return bool(self.tiktok_access_token and self.tiktok_access_token.get_secret_value())
+
+    @property
+    def video_publish_targets(self) -> list[str]:
+        targets = []
+        if self.meta_configured:
+            targets.append("instagram")
+        if self.facebook_configured:
+            targets.append("facebook")
+        if self.tiktok_configured:
+            targets.append("tiktok")
+        return targets
+
+    @property
     def groq_configured(self) -> bool:
         return bool(self.groq_api_key and self.groq_api_key.get_secret_value())
 
@@ -253,7 +279,8 @@ class Settings(BaseSettings):
 
     def secret_values(self) -> list[str]:
         vals = []
-        for s in (self.admin_api_token, self.groq_api_key, self.meta_access_token, self.meta_app_secret, self.token_encryption_key,
+        for s in (self.admin_api_token, self.groq_api_key, self.meta_access_token, self.meta_app_secret,
+                  self.facebook_page_access_token, self.tiktok_access_token, self.token_encryption_key,
                   self.pixabay_api_key, self.pexels_api_key, self.elevenlabs_api_key,
                   self.cloudinary_api_secret, self.alert_webhook_url):
             if s is not None and s.get_secret_value():

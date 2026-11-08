@@ -20,7 +20,7 @@ from app.services.video_service import (
     VideoSearchError,
     _elevenlabs_audio_with_timestamps,
     _upload_to_cloudinary,
-    search_videos,
+    get_pexels_video,
 )
 from app.services.video_worker import (
     LEASE_MINUTES,
@@ -32,6 +32,7 @@ from app.services.video_worker import (
 router = APIRouter(prefix="/api/video-worker", tags=["worker de vídeo"])
 WorkerAuth = Depends(require_video_worker)
 MAX_UPLOAD_BYTES = 60 * 1024 * 1024
+REACTION_PEXELS_VIDEO_ID = "15909403"
 
 
 class ClaimRequest(BaseModel):
@@ -77,12 +78,7 @@ def claim(req: ClaimRequest, db: Session = Depends(get_db)):
         fail_video_render(db, job, req.worker_id, f"Narração ElevenLabs falhou: {e}")
         raise HTTPException(502, str(e)) from e
     try:
-        reaction_candidates = search_videos(
-            "person holding smartphone surprised reaction", settings,
-        )
-        if not reaction_candidates:
-            raise VideoSearchError("nenhum vídeo de reação encontrado")
-        reaction = reaction_candidates[0]
+        reaction = get_pexels_video(REACTION_PEXELS_VIDEO_ID, settings)
     except VideoSearchError as e:
         fail_video_render(db, job, req.worker_id, f"Vídeo de reação não encontrado: {e}")
         raise HTTPException(502, str(e)) from e
@@ -121,7 +117,6 @@ def claim(req: ClaimRequest, db: Session = Depends(get_db)):
                     "duration_requested", settings.video_duration_seconds)),
                 "theme": asset.theme_key,
                 "trend_term": asset.trend_term,
-                "hook": asset.hook,
                 "subtitles": subtitles,
                 "narration_audio_base64": base64.b64encode(audio).decode("ascii"),
                 "narration_words": words,
