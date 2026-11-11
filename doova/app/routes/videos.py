@@ -112,10 +112,15 @@ def video_from_trend(req: VideoTrendRequest, db: Session = Depends(get_db)):
         raise HTTPException(422, f"transição inválida: {req.transition}; use uma de {VIDEO_TRANSITIONS}")
     try:
         remote = req.render and settings.video_render_mode == "android"
+        script_groq = None
+        if settings.trend_use_groq and settings.groq_configured:
+            from app.services.groq_service import GroqCaptionService
+
+            script_groq = GroqCaptionService(settings)
         asset = create_video(db, theme, req.trend_term, req.trend_term, settings,
                              client=http_client(), render=req.render and not remote, force=req.force,
                              variant=req.variant, transition=req.transition,
-                             duration_seconds=req.duration_seconds,
+                             duration_seconds=req.duration_seconds, script_groq=script_groq,
                              generated_image_count=req.generated_image_count)
     except VideoSearchError as e:
         raise HTTPException(502, str(e))

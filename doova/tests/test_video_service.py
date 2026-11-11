@@ -397,6 +397,8 @@ def test_script_ends_with_doova_install_cta():
     _, texts = _script_texts("chuva", "chuva")
 
     assert texts[-1] == "Instale o app Doova e encontre ajuda ou ofereça seu serviço."
+    assert texts[1] != "Tem alguém que sabe resolver."
+    assert "calhas obstruídas" in texts[1]
 
 
 def test_trend_script_uses_observed_context_and_three_second_hook():
@@ -428,8 +430,21 @@ def test_trend_script_uses_observed_context_and_three_second_hook():
     assert "A goteira tem solução?" in groq.user
     assert "observacionais" in groq.user
     assert "até 3 segundos" in groq.system
+    assert "audiência ampla" in groq.system
+    assert "emoção principal" in groq.system
+    assert "lacuna de curiosidade" in groq.system
+    assert "Demonstre autoridade" in groq.system
     assert rows[-1]["text"] == "Instale o app Doova e encontre ajuda ou ofereça seu serviço."
     assert rows[-1]["end"] == 12
+
+
+def test_fallback_hook_varies_by_trend_for_same_theme():
+    from app.services.video_service import _script_texts
+
+    chuva, _ = _script_texts("chuva", "chuva em Iporá")
+    calor, _ = _script_texts("chuva", "alerta de temporal no Centro-Oeste")
+
+    assert chuva != calor
 
 
 def test_recent_video_performance_context_ignores_metrics_before_seven_days(db):

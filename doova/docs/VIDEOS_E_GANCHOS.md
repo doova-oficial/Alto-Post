@@ -84,9 +84,13 @@ e o tick aguarda o upload do celular, a aprovação e o horário agendado. Se o 
 offline ou a busca do vídeo falhar, a publicação é adiada em vez de publicar a foto sozinha.
 Com `TREND_USE_GROQ=true` e Groq configurada, o servidor envia o termo em alta e até três
 manchetes observadas à IA para gerar um roteiro curto: um gancho nos primeiros três segundos,
-duas falas de contexto e a chamada do Doova. O prompt proíbe inventar fatos ou promessas; as
-manchetes servem apenas como contexto. Se a Groq não estiver habilitada ou falhar, é usado o
-roteiro padrão determinístico. O servidor envia as falas e seus tempos ao app, que renderiza
+duas falas de contexto e a chamada do Doova. O gancho conecta a tendência a uma situação
+cotidiana ampla, escolhe uma emoção e abre uma curiosidade que as falas resolvem; a autoridade
+vem de orientação prática verificável, sem credenciais, números ou recomendações inventadas.
+O prompt proíbe inventar fatos ou promessas; as manchetes servem apenas como contexto. O endpoint
+manual de vídeos também usa a Groq quando habilitada e configurada. Se a Groq não estiver habilitada
+ou falhar, o roteiro determinístico varia o gancho pelo termo e usa orientações específicas do tema.
+O servidor envia as falas e seus tempos ao app, que renderiza
 um Reel em tela dividida: o vídeo original fica na metade superior e o vídeo Pexels
 [a-woman-is-laughing-while-holding-a-phone-15909403](https://www.pexels.com/video/a-woman-is-laughing-while-holding-a-phone-15909403/)
 fica na metade inferior. A reação é uma cena ilustrativa de banco, não uma reação real ao
