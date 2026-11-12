@@ -141,6 +141,8 @@ class Settings(BaseSettings):
     # queimada (libass) é a parte mais pesada do ffmpeg, bem mais que scale/crop.
     video_timeout_seconds: float = Field(default=90.0, gt=0)
     video_duration_seconds: int = Field(default=12, ge=5, le=60)
+    video_auto_max_per_day: int = Field(default=2, ge=1, le=2)
+    video_location_id: str | None = None
     # Mantem 1080x1920 para o Instagram; a economia de RAM vem da concorrencia,
     # da quantidade de fontes e das threads do FFmpeg, nao da resolucao final.
     video_width: int = Field(default=1080, ge=480, le=2160)

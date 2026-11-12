@@ -1,11 +1,11 @@
 """Sugestões de temas a partir de fontes legítimas.
 
 Fontes:
-1. **Google Trends (RSS público "Trending now")** — https://trends.google.com/trending/rss?geo=BR-GO.
-   O Google não oferece API oficial estável e gratuita para o Trends; o RSS é público, mas
-   pode mudar sem aviso, traz apenas buscas em alta (não volume histórico) e raramente
-   coincide com o tema "serviços". Por isso: timeout curto, cache, filtro por palavras-chave
-   e o sistema funciona normalmente sem ele.
+1. **Google Trends (RSS público "Trending now")** — Goiás, Brasil e, se necessário, feeds
+   de uma amostra internacional (EUA, México, Reino Unido, Índia, Japão e Austrália).
+   O Google não oferece feed mundial agregado nem API oficial estável e gratuita para o Trends;
+   os RSSs são públicos, podem mudar sem aviso e trazem buscas em alta, não volume histórico.
+   Por isso: timeout curto, cache, filtro por relevância e o sistema funciona normalmente sem ele.
 2. Calendário de datas comemorativas (app/content/dates.yaml).
 3. Biblioteca de temas e perguntas frequentes de autônomos (app/content/themes.yaml).
 4. Resultados históricos das próprias publicações (analytics_service).
@@ -18,7 +18,7 @@ import logging
 import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 from sqlalchemy import func, select
@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 TRENDS_URL = "https://trends.google.com/trending/rss"
 NS = {"ht": "https://trends.google.com/trending/rss"}
 CACHE_KEY = "google_trends_cache"
+WORLD_TREND_GEOS = ("US", "MX", "GB", "IN", "JP", "AU")
+TREND_GEOS = ("BR-GO", "BR", *WORLD_TREND_GEOS)
 
 
 def _norm(s: str) -> str:
@@ -53,41 +55,83 @@ def parse_trends_rss(xml_text: str) -> list[dict[str, Any]]:
     return out
 
 
-def fetch_trends(settings: Settings | None = None, client: httpx.Client | None = None) -> dict[str, Any]:
+def _fetch_trends_geo(geo: str, client: httpx.Client) -> dict[str, Any]:
+    try:
+        response = client.get(TRENDS_URL, params={"geo": geo})
+        response.raise_for_status()
+        items = parse_trends_rss(response.text)
+        for item in items:
+            item["geo"] = geo
+        return {"items": items, "source": "Google Trends RSS", "geo": geo, "error": None}
+    except Exception as exc:  # rede, mudança de formato, bloqueio
+        return {"items": [], "source": "Google Trends RSS", "geo": geo,
+                "error": f"{geo}: {type(exc).__name__}"}
+
+
+def fetch_trends(settings: Settings | None = None, client: httpx.Client | None = None,
+                 is_relevant: Callable[[list[dict[str, Any]]], bool] | None = None) -> dict[str, Any]:
     settings = settings or get_settings()
     if not settings.google_trends_rss_enabled:
         return {"items": [], "source": "desativado", "error": None}
-    geos = [settings.google_trends_geo] if settings.google_trends_geo in ("BR",) else [settings.google_trends_geo, "BR"]
-    if "BR-GO" not in geos:
-        geos.insert(0, "BR-GO")
+    owns_client = client is None
     c = client or httpx.Client(timeout=10, headers={"User-Agent": "DoovaMarketingBot/1.0"})
-    items: list[dict] = []
     errors = []
-    for geo in geos:
-        try:
-            r = c.get(TRENDS_URL, params={"geo": geo})
-            r.raise_for_status()
-            for it in parse_trends_rss(r.text):
-                it["geo"] = geo
-                items.append(it)
-        except Exception as e:  # rede, mudança de formato, bloqueio
-            errors.append(f"{geo}: {type(e).__name__}")
-    return {"items": items, "source": "Google Trends RSS", "error": "; ".join(errors) or None}
+    last_result: dict[str, Any] = {"items": [], "source": "Google Trends RSS", "geo": None, "error": None}
+    searched = []
+    try:
+        for geo in TREND_GEOS:
+            result = _fetch_trends_geo(geo, c)
+            searched.append(geo)
+            if result["error"]:
+                errors.append(result["error"])
+            if result["items"]:
+                last_result = result
+                if is_relevant is None or is_relevant(result["items"]):
+                    return {**result, "searched_geos": searched, "error": "; ".join(errors) or None}
+        return {**last_result, "searched_geos": searched, "error": "; ".join(errors) or None}
+    finally:
+        if owns_client:
+            c.close()
 
 
 def cached_trends(db: Session, settings: Settings | None = None, max_age_hours: int = 6,
-                  client: httpx.Client | None = None) -> dict[str, Any]:
-    cache = get_state(db, CACHE_KEY)
+                  client: httpx.Client | None = None,
+                  is_relevant: Callable[[list[dict[str, Any]]], bool] | None = None) -> dict[str, Any]:
+    settings = settings or get_settings()
+    if not settings.google_trends_rss_enabled:
+        return {"items": [], "source": "desativado", "error": None}
     now = utcnow()
-    if cache and cache.get("fetched_at") and (now.timestamp() - cache["fetched_at"]) < max_age_hours * 3600:
-        return cache
-    data = fetch_trends(settings, client)
-    data["fetched_at"] = now.timestamp()
-    if data["items"] or not cache:
-        set_state(db, CACHE_KEY, data)
-        db.commit()
-        return data
-    return {**cache, "error": data.get("error")}
+    cache = get_state(db, CACHE_KEY) or {}
+    regions = dict(cache.get("regions") or {})
+    owns_client = client is None
+    c = client or httpx.Client(timeout=10, headers={"User-Agent": "DoovaMarketingBot/1.0"})
+    errors = []
+    searched = []
+    last_result: dict[str, Any] = {"items": [], "source": "Google Trends RSS", "geo": None, "error": None}
+    try:
+        for geo in TREND_GEOS:
+            region = regions.get(geo)
+            fresh = (region and region.get("fetched_at")
+                     and now.timestamp() - region["fetched_at"] < max_age_hours * 3600)
+            if fresh:
+                result = region
+            else:
+                result = _fetch_trends_geo(geo, c)
+                regions[geo] = {**result, "fetched_at": now.timestamp()}
+                cache["regions"] = regions
+                set_state(db, CACHE_KEY, cache)
+                db.commit()
+            searched.append(geo)
+            if result.get("error"):
+                errors.append(result["error"])
+            if result.get("items"):
+                last_result = result
+                if is_relevant is None or is_relevant(result["items"]):
+                    return {**result, "searched_geos": searched, "error": "; ".join(errors) or None}
+        return {**last_result, "searched_geos": searched, "error": "; ".join(errors) or None}
+    finally:
+        if owns_client:
+            c.close()
 
 
 def relevant_trends(items: list[dict], keywords: list[str]) -> list[dict]:
@@ -164,10 +208,15 @@ def suggestions(db: Session, settings: Settings | None = None, today: date | Non
     # 4) tendências de busca relevantes
     trends_info = {"source": "Google Trends RSS", "error": None, "relevant": []}
     if include_trends:
-        data = cached_trends(db, settings, client=trends_client)
-        rel = relevant_trends(data.get("items", []), library.trend_keywords())
+        keywords = library.trend_keywords()
+        data = cached_trends(
+            db, settings, client=trends_client,
+            is_relevant=lambda items: bool(relevant_trends(items, keywords)),
+        )
+        rel = relevant_trends(data.get("items", []), keywords)
         trends_info = {"source": data.get("source"), "error": data.get("error"), "relevant": rel[:5],
-                       "total_items": len(data.get("items", []))}
+                       "total_items": len(data.get("items", [])), "geo": data.get("geo"),
+                       "searched_geos": data.get("searched_geos", [])}
         for it in rel[:3]:
             out.append({"theme": f"Busca em alta: {it['term']}", "theme_key": None,
                         "justification": f"Termo em alta no Google ({it['geo']}, tráfego aprox. {it['approx_traffic']}) "

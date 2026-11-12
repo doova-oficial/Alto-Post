@@ -154,6 +154,21 @@ def test_job_video_publish_publishes_pending_reels(db, monkeypatch):
     assert asset.metadata_json["instagram_media_id"]
 
 
+def test_job_video_publish_spaces_reels_and_defers_the_next_video(db, monkeypatch):
+    reload_settings(monkeypatch, VIDEO_AUTO_PUBLISH="true", DRY_RUN="false", META_IG_USER_ID="1",
+                    META_ACCESS_TOKEN="IGAA" + "x" * 30)
+    first = _asset(db, provider_id="spaced-1")
+    second = _asset(db, provider_id="spaced-2")
+    meta = FakeMeta()
+    monkeypatch.setattr("app.services.meta_service.MetaService", lambda *a, **kw: meta)
+    from app.services.scheduler import job_video_publish
+
+    result = job_video_publish()
+
+    assert result["published"] == [first.id]
+    assert second.id in result["deferred"]
+
+
 def test_job_video_publish_works_with_facebook_without_instagram_credentials(db, monkeypatch):
     reload_settings(
         monkeypatch,

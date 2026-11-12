@@ -9,18 +9,20 @@ e não envia a manchete original para o banco de mídia.
 Configure `PEXELS_API_KEY` (Pixabay só é fallback se `VIDEO_PIXABAY_FALLBACK_ENABLED=true`), as credenciais do ElevenLabs (`ELEVENLABS_API_KEY` e
 `ELEVENLABS_VOICE_ID`) e as três variáveis do Cloudinary: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` e
 `CLOUDINARY_API_SECRET`. O Dockerfile instala o `ffmpeg`, que converte o vídeo para 9:16, intercala até três
-placeholders com cortes secos, corta a duração configurada e queima o texto em quatro blocos de legenda sem borda preta.
+placeholders em cenas que mudam a cada dois segundos, limita o vídeo a 10–12 segundos e queima
+legendas de 1,5–2 segundos sem borda preta. A primeira legenda começa no primeiro quadro, sem intro ou logo.
 O MP4 é enviado ao Cloudinary; o PostgreSQL guarda somente a URL,
 metadados e o roteiro. Vídeos antigos que ainda tenham `mp4_bytes` continuam sendo servidos.
 
 No ElevenLabs, `ELEVENLABS_VOICE_ID` deve apontar para uma voz própria disponível em `My Voices`.
 Vozes da Voice Library não ficam disponíveis pela API para contas gratuitas.
 
-Com `TREND_AUTO_ENABLED=true`, o agendador tenta completar até 10 Reels em cada janela móvel
-de 24 horas: primeiro usa tendências aprovadas pelos filtros; depois, temas perenes de
+Com `TREND_AUTO_ENABLED=true`, o agendador tenta completar até dois Reels em cada janela móvel
+de 24 horas (`VIDEO_AUTO_MAX_PER_DAY`, máximo 2): primeiro usa tendências aprovadas pelos filtros; depois, temas perenes de
 `app/content/themes.yaml`. Reels perenes não são apresentados como notícias ou tendências.
-Para publicar 10 por dia, configure também `MAX_POSTS_PER_DAY=10`, intervalos e horários
-compatíveis, `VIDEO_AUTO_PUBLISH=true`, `DRY_RUN=false` e aprovação automática. No modo Android,
+Os horários são distribuídos pela agenda existente e o publicador também aplica o teto diário.
+Para publicar automaticamente, configure horários compatíveis, `VIDEO_AUTO_PUBLISH=true`,
+`DRY_RUN=false` e aprovação automática. No modo Android,
 o worker precisa ficar conectado, autenticado e processar a fila; jobs pendentes não são Reels
 renderizados nem publicações concluídas.
 O endpoint `GET /api/config` mostra os limites efetivos e se a publicação automática e o token
@@ -28,9 +30,10 @@ do worker estão configurados. Os limites de publicação no blueprint são 10 p
 intervalo de 90 minutos entre os horários.
 
 O roteiro enviado ao ElevenLabs permanece limpo, sem instruções de tom entre colchetes.
-Além dos placeholders do Pexels, `VIDEO_GENERATED_IMAGE_COUNT` cria cards verticais locais
-com o tema e as falas do roteiro. Eles são intercalados no vídeo com transições `xfade` e
-ficam registrados em `segments` no retorno da API e em `metadata_json`, com início, fim,
+O Groq retorna três hooks afirmativos e quatro frases curtas; um hook é escolhido em rodízio
+persistente para cada publicação. O hook mostra risco, resultado ou dor, e o CTA final é suave.
+Os cortes e reenquadramentos priorizam os clipes de vídeo do Pexels, com um card opcional.
+Os segmentos ficam registrados no retorno da API e em `metadata_json`, com início, fim,
 tipo de mídia e transição. Isso permite comparar depois o desempenho de cada trecho;
 retenção segundo a segundo ainda depende de uma fonte de métricas de Reels que forneça esse dado.
 
@@ -43,6 +46,9 @@ no `render.yaml`; aumente-os somente se houver memória disponível.
 - `POST /api/videos/trend` com `{"trend_term":"chuva em Goiânia", "render":true}` busca o vídeo, cria o gancho e renderiza o MP4.
 - Se o mesmo vídeo de stock já tiver sido usado, envie `"force":true` para re-renderizar o teste; sem isso o fluxo continua idempotente e devolve o vídeo existente.
 - `GET /api/videos/{id}` retorna o roteiro SRT, o gancho e a origem.
+- `GET /api/videos/hook-tests` compara as variações e lista os registros de cada post.
+- `PUT /api/videos/hook-tests/{post_id}/metrics` aceita `{"views":1200,"retention_3s_percent":9.5,"avg_watch_time_ms":4200}`.
+  Quando não houver `post_id` interno (publicação manual sem post vinculado), use o ID retornado pela plataforma.
 - `GET /api/videos/{id}/file` serve o MP4 pronto.
 - `POST /api/videos/{id}/publish` publica nos destinos com credenciais configuradas. Envie, por exemplo,
   `{"platforms":["facebook","tiktok"]}` para escolher destinos ou `{"platforms":["facebook"],"force":true}`
@@ -78,18 +84,22 @@ Para transferir o processamento para o celular, configure `VIDEO_RENDER_MODE=and
 `DRY_RUN=true` até validar o fluxo antes de habilitar a publicação real. O app Android
 precisa da URL HTTPS do serviço e do mesmo token do worker; ele não usa credenciais da Meta,
 Pexels ou Cloudinary.
+Para marcar Goiânia no Instagram, configure `VIDEO_LOCATION_ID` com um ID de localização
+válido aceito pela Graph API; o nome da cidade sozinho não é aceito. Sem esse ID, a publicação
+continua sem localização. O cross-post para Facebook permanece habilitado conforme os destinos
+já configurados.
 
 Nesse modo, a publicação de tendência fica vinculada ao Reel: o publicador de fotos a ignora,
 e o tick aguarda o upload do celular, a aprovação e o horário agendado. Se o celular estiver
 offline ou a busca do vídeo falhar, a publicação é adiada em vez de publicar a foto sozinha.
 Com `TREND_USE_GROQ=true` e Groq configurada, o servidor envia o termo em alta e até três
-manchetes observadas à IA para gerar um roteiro curto: um gancho nos primeiros três segundos,
-duas falas de contexto e a chamada do Doova. O gancho conecta a tendência a uma situação
-cotidiana ampla, escolhe uma emoção e abre uma curiosidade que as falas resolvem; a autoridade
-vem de orientação prática verificável, sem credenciais, números ou recomendações inventadas.
+manchetes observadas à IA para gerar três hooks e um roteiro de 10–12 segundos com quatro
+frases curtas. O hook conecta a tendência a uma situação cotidiana ampla, escolhe uma emoção e
+abre uma curiosidade que as falas resolvem; a autoridade vem de orientação prática verificável,
+sem credenciais, números ou recomendações inventadas.
 O prompt proíbe inventar fatos ou promessas; as manchetes servem apenas como contexto. O endpoint
 manual de vídeos também usa a Groq quando habilitada e configurada. Se a Groq não estiver habilitada
-ou falhar, o roteiro determinístico varia o gancho pelo termo e usa orientações específicas do tema.
+ou falhar, o roteiro determinístico alterna três hooks por postagem e usa orientações específicas do tema.
 O servidor envia as falas e seus tempos ao app, que renderiza
 um Reel em tela dividida: o vídeo original fica na metade superior e o vídeo Pexels
 [a-woman-is-laughing-while-holding-a-phone-15909403](https://www.pexels.com/video/a-woman-is-laughing-while-holding-a-phone-15909403/)

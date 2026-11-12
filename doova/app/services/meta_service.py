@@ -152,7 +152,8 @@ class MetaService:
             raise MetaError(f"resposta sem id da mídia: {body}", ambiguous=True)
         return str(body["id"])
 
-    def create_reel_container(self, video_url: str, caption: str, share_to_feed: bool = True) -> str:
+    def create_reel_container(self, video_url: str, caption: str, share_to_feed: bool = True,
+                              location_id: str | None = None) -> str:
         """Cria contêiner de Reel usando uma URL HTTPS pública (ex.: Cloudinary)."""
         if not video_url.lower().startswith("https://"):
             raise MetaError("video_url precisa ser uma URL pública HTTPS")
@@ -162,6 +163,8 @@ class MetaService:
             "caption": (caption or "")[:2200],
             "share_to_feed": "true" if share_to_feed else "false",
         }
+        if location_id:
+            data["location_id"] = location_id
         body = self._request("POST", f"{self._ig_id()}/media", data=data, mutating=True)
         if "id" not in body:
             raise MetaError(f"resposta sem id do contêiner de Reel: {body}", ambiguous=True)

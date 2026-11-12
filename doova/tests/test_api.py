@@ -134,6 +134,9 @@ def test_config_does_not_leak_secrets(client, auth, monkeypatch):
     config = response.json()
     assert config["max_posts_per_day"] == 10
     assert config["trend_auto_max_per_day"] == 10
+    assert config["video_auto_max_per_day"] == 2
+    assert config["video_duration_seconds"] == 12
+    assert config["video_location_configured"] is False
 
 
 def test_suggestions_and_library(client, auth):
@@ -146,6 +149,41 @@ def test_suggestions_and_library(client, auth):
 def test_metrics_summary_empty(client, auth):
     r = client.get("/api/metrics/summary", headers=auth)
     assert r.status_code == 200 and r.json()["posts_analyzed"] == 0 and r.json()["limitations"]
+
+
+def test_video_hook_metrics_can_be_recorded_and_compared(client, auth, db):
+    from app.models import VideoAsset, VideoHookExperiment
+
+    _use_fake_groq()
+    post_id = client.post(
+        "/api/posts", headers=auth, json={"theme_key": "apresentacao", "caption": MANUAL_CAPTION},
+    ).json()["id"]
+    asset = VideoAsset(
+        provider="pexels", provider_id="hook-metrics", query="local service", title="Vídeo",
+        creator="Pexels", source="Pexels", license="Pexels License",
+        landing_url="https://www.pexels.com/video/1/", download_url="https://cdn.example/video.mp4",
+        width=720, height=1280, duration_seconds=10, hook="Goteira pequena vira dano maior",
+    )
+    db.add(asset)
+    db.flush()
+    db.add(VideoHookExperiment(post_id=post_id, video_id=asset.id, variation=2,
+                               hook_text=asset.hook))
+    db.commit()
+
+    response = client.put(
+        f"/api/videos/hook-tests/{post_id}/metrics", headers=auth,
+        json={"views": 1200, "retention_3s_percent": 9.5, "avg_watch_time_ms": 4200},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["retention_3s_percent"] == 9.5
+    comparison = client.get("/api/videos/hook-tests", headers=auth).json()
+    assert comparison["comparisons"] == [{
+        "variation": 2, "posts": 1, "views": 1200, "measured_posts": 1,
+        "avg_retention_3s_percent": 9.5, "watch_time_samples": 1,
+        "avg_watch_time_ms": 4200,
+    }]
+    assert comparison["experiments"][0]["post_id"] == post_id
 
 
 def test_video_analytics_dashboard_data_requires_admin(client, auth):

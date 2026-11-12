@@ -236,6 +236,24 @@ class VideoMetricSnapshot(Base):
     raw: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class VideoHookExperiment(Base):
+    """Hook aplicado a uma publicação e métricas observadas para comparação."""
+
+    __tablename__ = "video_hook_experiments"
+    __table_args__ = (UniqueConstraint("post_id", name="uq_video_hook_experiment_post"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    post_id: Mapped[str | None] = mapped_column(ForeignKey("posts.id"), nullable=True, index=True)
+    video_id: Mapped[str] = mapped_column(ForeignKey("video_assets.id"), index=True)
+    platform_post_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    variation: Mapped[int] = mapped_column(Integer)
+    hook_text: Mapped[str] = mapped_column(Text)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    views: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    retention_3s_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_watch_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class Post(Base):
     __tablename__ = "posts"
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("post"))

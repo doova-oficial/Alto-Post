@@ -2,7 +2,10 @@
 
 Este fluxo transforma um assunto em alta no Google Trends em uma publicação com foto, sem ninguém precisar escolher a imagem:
 
-1. **Assunto em alta.** O sistema lê o Google Trends (Goiás primeiro, depois Brasil).
+1. **Assunto em alta.** O sistema consulta o RSS do Google Trends em Goiás, depois no Brasil se
+   não houver tema de serviço elegível e, por fim, em uma amostra internacional (EUA, México,
+   Reino Unido, Índia, Japão e Austrália). Não há um feed mundial agregado; o país de origem
+   acompanha cada assunto e aparece no relatório.
 2. **Triagem.** Assuntos sensíveis são descartados. Isso vale para o termo e para as manchetes ligadas a ele: tragédia, morte, acidente, crime, polícia, política, eleição, religião, saúde, apostas e conteúdo adulto. A lista fica em `SENSITIVE`, em `app/services/trend_content.py`. Para acrescentar palavras sem mexer no código, use `TREND_BLOCKLIST_EXTRA`.
 3. **Palavra que representa o assunto.** O assunto só segue se combinar com um tema de serviço de `TREND_THEMES`. Cada tema tem palavras-chave e um termo genérico de busca de foto. Exemplos:
 
@@ -13,7 +16,7 @@ Este fluxo transforma um assunto em alta no Google Trends em uma publicação co
    | "Enem 2026" | estudos | student studying tutor | estudante estudando |
    | "Dia das Mães" | festas | party food buffet | festa salgados |
 
-   Com a Groq configurada, ela pode encaixar em um tema da lista um assunto que as palavras não pegaram, como "Halloween" → festas. Ela também pode vetar o assunto. Ela nunca cria temas novos, e a busca nunca usa nomes de pessoas ou marcas.
+   Com a Groq configurada, ela pode encaixar em um tema da lista um assunto que as palavras não pegaram, como "Halloween" → festas. Ela também pode vetar o assunto. Ela nunca cria temas novos, e a busca nunca usa nomes de pessoas ou marcas. Os termos em inglês também são reconhecidos para os feeds internacionais.
 4. **Foto.** A busca é feita no Openverse e, se houver chave, no Pixabay. Se o termo completo não trouxer nada, o sistema tenta uma versão mais curta ("air conditioner repair" → "air conditioner"). A foto é baixada e convertida para JPEG. Ela é guardada com autor, licença e página de origem, e não se repete por `IMAGE_REUSE_DAYS`.
 5. **Publicação.** A publicação usa um dos modelos com foto (`foto_destaque` ou `foto_fundo`, alternando para comparar os dois). O texto da arte é a frase do tema. A legenda vem da Groq e termina com o crédito completo da foto.
 6. **Revisão.** No modo automático (padrão), as checagens automáticas substituem a revisão: a foto é recusada se o título ou as tags indicarem pessoas ou marcas, e o assunto é triado de novo, com as manchetes mais recentes, logo antes de publicar (se ganhou um lado sensível, a publicação é cancelada). Com `REQUIRE_MANUAL_APPROVAL=true`, a publicação fica em `needs_review`. Em ambos os casos ela expira em `TREND_POST_TTL_HOURS` (48 h) se não for publicada. O publicador também se recusa a publicar se:
@@ -42,7 +45,7 @@ A foto é **ilustrativa**. A legenda é instruída a nunca dizer que ela mostra 
 |---|---|
 | Ver o que o sistema faria agora, sem criar nada | `GET /api/trends/evaluate` |
 | Rodar manualmente | `POST /api/trends/run` ou `python -m app.cli trends-run --force` |
-| Rodar sozinho | `TREND_AUTO_ENABLED=true`. Roda a cada `TREND_AUTO_INTERVAL_HOURS`, com no máximo `TREND_AUTO_MAX_PER_DAY` publicações por 24 h (padrão: 3). No modo Android, cada Reel aprovado entra na fila de renderização; o total real depende de haver tendências elegíveis. |
+| Rodar sozinho | `TREND_AUTO_ENABLED=true`. Roda a cada `TREND_AUTO_INTERVAL_HOURS`, com no máximo `TREND_AUTO_MAX_PER_DAY` publicações por 24 h. Quando Reels estão habilitados, `VIDEO_AUTO_MAX_PER_DAY` limita os vídeos a 2 por 24 h (máximo configurável: 2). No modo Android, cada Reel aprovado entra na fila de renderização; o total real depende de haver tendências elegíveis. |
 | Buscar fotos à mão | `GET /api/photos/search?q=roof%20repair&provider=openverse` |
 | Importar uma foto escolhida | `POST /api/photos/import` com `{"provider": "openverse", "provider_id": "..."}` |
 | Procurar e importar a primeira foto adequada | `POST /api/photos/find` com `{"query_en": "...", "query_pt": "..."}` |

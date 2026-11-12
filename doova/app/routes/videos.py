@@ -2,19 +2,20 @@
 from __future__ import annotations
 
 import shutil
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db, utcnow
-from app.models import Post, PostStatus, VideoAsset
+from app.models import Post, PostStatus, VideoAsset, VideoHookExperiment
 from app.routes.deps import http_client
 from app.security import AdminDep, GenerationLimit
-from app.services.trend_content import TREND_THEMES, match_theme
+from app.services.trend_content import TREND_THEMES, _next_hook_variant, match_theme
 from app.services.video_service import (VIDEO_CREATIVE_SPECS, VIDEO_TRANSITIONS, VideoDeleteError,
                                         VideoPublishError, VideoSearchError, create_video, delete_video,
                                         public, publish_video_to_targets, search_videos,
@@ -33,7 +34,7 @@ class VideoTrendRequest(BaseModel):
     # em app/services/video_service.py). É assim que um experimento fixa o nível do bloco.
     variant: str | None = Field(default=None, max_length=40)
     transition: str | None = Field(default=None, max_length=20)
-    duration_seconds: float | None = Field(default=None, ge=5, le=60)
+    duration_seconds: float | None = Field(default=None, ge=10, le=12)
     generated_image_count: int | None = Field(default=None, ge=0, le=4)
     publish_to_instagram: bool | None = None  # None respeita VIDEO_AUTO_PUBLISH
 
@@ -54,6 +55,12 @@ class VideoPublishRequest(BaseModel):
                                   or set(value) - {"instagram", "facebook", "tiktok"}):
             raise ValueError("use destinos únicos: instagram, facebook, tiktok")
         return value
+
+
+class VideoHookMetricsRequest(BaseModel):
+    views: int = Field(ge=0)
+    retention_3s_percent: float = Field(ge=0, le=100)
+    avg_watch_time_ms: int | None = Field(default=None, ge=0)
 
 
 def _theme(req: VideoTrendRequest) -> str:
@@ -121,7 +128,8 @@ def video_from_trend(req: VideoTrendRequest, db: Session = Depends(get_db)):
                              client=http_client(), render=req.render and not remote, force=req.force,
                              variant=req.variant, transition=req.transition,
                              duration_seconds=req.duration_seconds, script_groq=script_groq,
-                             generated_image_count=req.generated_image_count)
+                             generated_image_count=req.generated_image_count,
+                             hook_variant_index=_next_hook_variant(db))
     except VideoSearchError as e:
         raise HTTPException(502, str(e))
     should_publish = settings.video_auto_publish if req.publish_to_instagram is None else req.publish_to_instagram
@@ -192,6 +200,68 @@ def video_factors():
         "video_generated_image_count": {"min": VIDEO_FACTORS["video_generated_image_count"]["min"],
                                         "max": VIDEO_FACTORS["video_generated_image_count"]["max"]},
     }}
+
+
+@router.get("/videos/hook-tests", tags=["vídeos"],
+            summary="Comparar hooks e métricas registradas")
+def list_video_hook_tests(db: Session = Depends(get_db)):
+    records = db.scalars(select(VideoHookExperiment).order_by(VideoHookExperiment.recorded_at.desc())).all()
+    comparisons: dict[int, dict[str, Any]] = {}
+    for record in records:
+        group = comparisons.setdefault(record.variation, {
+            "variation": record.variation, "posts": 0, "views": 0, "measured_posts": 0,
+            "retention_3s_percent_sum": 0.0, "avg_watch_time_ms_sum": 0, "watch_time_samples": 0,
+        })
+        group["posts"] += 1
+        group["views"] += record.views or 0
+        if record.retention_3s_percent is not None:
+            group["measured_posts"] += 1
+            group["retention_3s_percent_sum"] += record.retention_3s_percent
+        if record.avg_watch_time_ms is not None:
+            group["watch_time_samples"] += 1
+            group["avg_watch_time_ms_sum"] += record.avg_watch_time_ms
+    for group in comparisons.values():
+        retention_sum = group.pop("retention_3s_percent_sum")
+        watch_time_sum = group.pop("avg_watch_time_ms_sum")
+        group["avg_retention_3s_percent"] = (
+            round(retention_sum / group["measured_posts"], 2) if group["measured_posts"] else None
+        )
+        group["avg_watch_time_ms"] = (
+            round(watch_time_sum / group["watch_time_samples"]) if group["watch_time_samples"] else None
+        )
+    return {
+        "comparisons": sorted(comparisons.values(), key=lambda item: item["variation"]),
+        "experiments": [{
+            "post_id": record.post_id,
+            "platform_post_id": record.platform_post_id,
+            "video_id": record.video_id,
+            "variation": record.variation,
+            "hook_text": record.hook_text,
+            "recorded_at": record.recorded_at.isoformat(),
+            "published_at": record.published_at.isoformat() if record.published_at else None,
+            "views": record.views,
+            "retention_3s_percent": record.retention_3s_percent,
+            "avg_watch_time_ms": record.avg_watch_time_ms,
+        } for record in records],
+    }
+
+
+@router.put("/videos/hook-tests/{post_id}/metrics", tags=["vídeos"],
+            summary="Registrar views e retenção de três segundos")
+def update_video_hook_metrics(post_id: str, req: VideoHookMetricsRequest,
+                              db: Session = Depends(get_db)):
+    record = db.scalar(select(VideoHookExperiment).where(
+        or_(VideoHookExperiment.post_id == post_id, VideoHookExperiment.platform_post_id == post_id),
+    ))
+    if record is None:
+        raise HTTPException(404, "teste de hook não encontrado para esse post")
+    record.views = req.views
+    record.retention_3s_percent = req.retention_3s_percent
+    record.avg_watch_time_ms = req.avg_watch_time_ms
+    db.commit()
+    return {"post_id": post_id, "views": record.views,
+            "retention_3s_percent": record.retention_3s_percent,
+            "avg_watch_time_ms": record.avg_watch_time_ms}
 
 
 @router.get("/videos", tags=["vídeos"], summary="Listar placeholders de vídeo gerados")

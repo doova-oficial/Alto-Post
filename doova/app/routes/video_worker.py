@@ -66,9 +66,13 @@ def claim(req: ClaimRequest, db: Session = Depends(get_db)):
         return {"job": None, "poll_after_seconds": 60}
     job, asset = claimed
     subtitles = (asset.metadata_json or {}).get("texts", [])
-    narration_text = ". ".join(
+    script_texts = (asset.metadata_json or {}).get("script_texts")
+    narration_lines = (script_texts if isinstance(script_texts, list) else [
         row.get("text", "").strip() for row in subtitles
         if isinstance(row, dict) and isinstance(row.get("text"), str) and row["text"].strip()
+    ])
+    narration_text = ". ".join(
+        line.strip() for line in narration_lines if isinstance(line, str) and line.strip()
     )
     try:
         audio, words = _elevenlabs_audio_with_timestamps(

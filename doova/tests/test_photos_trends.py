@@ -231,13 +231,13 @@ def test_android_trend_creates_reel_post_without_searching_for_photo(db, monkeyp
     assert result["report"][0]["photo_search"]["skipped"] == "Reel substitui a foto"
 
 
-def test_android_trend_can_queue_three_reels_per_day(db, monkeypatch):
-    from app.models import Post, VideoAsset, VideoRenderJob
+def test_android_trend_queues_at_most_two_reels_per_day(db, monkeypatch):
+    from app.models import Post, VideoAsset, VideoHookExperiment, VideoRenderJob
     from app.services import trend_content as tc
 
     s = reload_settings(monkeypatch, TREND_AUTO_MAX_PER_DAY="3", TREND_USE_GROQ="false",
                         VIDEO_RENDER_MODE="android", PEXELS_API_KEY="test-pexels-key")
-    sequence = iter(range(3))
+    sequence = iter(range(2))
 
     def create_video(session, theme, trend_term, *args, **kwargs):
         index = next(sequence)
@@ -246,7 +246,7 @@ def test_android_trend_can_queue_three_reels_per_day(db, monkeypatch):
             creator="Creator", source="Pexels", license="Pexels License",
             landing_url="https://www.pexels.com/video/1/", download_url="https://cdn.example/video.mp4",
             width=720, height=1280, duration_seconds=10, hook="Gancho", trend_term=trend_term,
-            theme_key=theme, metadata_json={"texts": [], "duration_seconds": 10},
+            theme_key=theme, metadata_json={"texts": [], "duration_seconds": 10, "hook_variation": index + 1},
         )
         session.add(asset)
         session.flush()
@@ -261,12 +261,13 @@ def test_android_trend_can_queue_three_reels_per_day(db, monkeypatch):
 
     result = tc.run_trend_auto(db, s, force=True, client=_transport([]), content=_content(CAP), items=items)
 
-    assert len(result["created"]) == 3, result["report"]
-    assert db.query(VideoRenderJob).count() == 3
-    assert db.query(Post).filter(Post.video_asset_id.is_not(None)).count() == 3
+    assert len(result["created"]) == 2, result["report"]
+    assert db.query(VideoRenderJob).count() == 2
+    assert db.query(Post).filter(Post.video_asset_id.is_not(None)).count() == 2
+    assert sorted(row.variation for row in db.query(VideoHookExperiment).all()) == [1, 2]
 
 
-def test_catalog_reel_auto_fills_ten_reels_and_respects_daily_quota(db, monkeypatch):
+def test_catalog_reel_auto_fills_two_reels_and_respects_daily_quota(db, monkeypatch):
     from app.models import Post, VideoAsset, VideoRenderJob
     from app.services import trend_content as tc
 
@@ -284,8 +285,10 @@ def test_catalog_reel_auto_fills_ten_reels_and_respects_daily_quota(db, monkeypa
             provider="pexels", provider_id=f"catalog-reel-{created_assets}", query=query, title=trend_term,
             creator="Creator", source="Pexels", license="Pexels License",
             landing_url="https://www.pexels.com/video/1/", download_url="https://cdn.example/video.mp4",
-            width=720, height=1280, duration_seconds=10, hook=kwargs["script_override"][0],
-            trend_term=trend_term, theme_key=theme, metadata_json={"texts": []},
+            width=720, height=1280, duration_seconds=10,
+            hook=f"Gancho {kwargs['hook_variant_index'] + 1}",
+            trend_term=trend_term, theme_key=theme,
+            metadata_json={"texts": [], "hook_variation": kwargs["hook_variant_index"] + 1},
         )
         session.add(asset)
         session.flush()
@@ -294,13 +297,13 @@ def test_catalog_reel_auto_fills_ten_reels_and_respects_daily_quota(db, monkeypa
     monkeypatch.setattr("app.services.video_service.create_video", create_video)
     result = tc.run_catalog_reel_auto(db, s, content=_content(CAP))
 
-    assert len(result["created"]) == 10, result["report"]
-    assert db.query(Post).filter(Post.video_asset_id.is_not(None)).count() == 10
-    assert db.query(VideoRenderJob).count() == 10
+    assert len(result["created"]) == 2, result["report"]
+    assert db.query(Post).filter(Post.video_asset_id.is_not(None)).count() == 2
+    assert db.query(VideoRenderJob).count() == 2
     assert all(db.get(Post, post_id).status == "approved" for post_id in result["created"])
     assert all(row["decision"] == "publicação criada" for row in result["report"] if "decision" in row)
     from app.services.content_service import ContentService
-    assert ContentService(s).auto_schedule(db) == 10
+    assert ContentService(s).auto_schedule(db) == 2
     assert all(db.get(Post, post_id).status == "scheduled" for post_id in result["created"])
 
     again = tc.run_catalog_reel_auto(db, s, content=_content(CAP))

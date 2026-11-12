@@ -5,7 +5,8 @@ import httpx
 from app.logging_config import redact
 from app.services import scheduler
 from app.services.backup import run_backup
-from app.services.trends_service import parse_trends_rss, relevant_trends, suggestions
+from app.services.trend_content import match_theme, screen_trend
+from app.services.trends_service import cached_trends, fetch_trends, parse_trends_rss, relevant_trends, suggestions
 from tests.conftest import reload_settings
 
 RSS = """<?xml version="1.0" encoding="UTF-8"?>
@@ -21,6 +22,89 @@ def test_trends_parsing_and_filter():
     assert [i["term"] for i in items] == ["preço do pedreiro", "futebol hoje"]
     rel = relevant_trends(items, ["pedreiro", "goiás"])
     assert len(rel) == 1 and set(rel[0]["matched"]) == {"pedreiro", "goias"}
+
+
+def test_trends_fetch_uses_brazil_only_when_goias_has_no_trends(monkeypatch):
+    s = reload_settings(monkeypatch, GOOGLE_TRENDS_RSS_ENABLED="true")
+    requests = []
+
+    def handler(request):
+        requests.append(request.url.params["geo"])
+        if request.url.params["geo"] == "BR-GO":
+            return httpx.Response(200, text="<rss><channel /></rss>")
+        return httpx.Response(200, text=RSS)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = fetch_trends(s, client)
+
+    assert requests == ["BR-GO", "BR"]
+    assert result["items"] and all(item["geo"] == "BR" for item in result["items"])
+
+
+def test_trends_fetch_does_not_query_brazil_when_goias_has_trends(monkeypatch):
+    s = reload_settings(monkeypatch, GOOGLE_TRENDS_RSS_ENABLED="true")
+    requests = []
+
+    def handler(request):
+        requests.append(request.url.params["geo"])
+        return httpx.Response(200, text=RSS)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = fetch_trends(s, client)
+
+    assert requests == ["BR-GO"]
+    assert result["items"] and all(item["geo"] == "BR-GO" for item in result["items"])
+
+
+def test_trends_fetch_falls_back_to_international_feed_when_brazil_is_irrelevant(monkeypatch):
+    s = reload_settings(monkeypatch, GOOGLE_TRENDS_RSS_ENABLED="true")
+    requests = []
+    international_rss = RSS.replace("preço do pedreiro", "roof repair")
+
+    def handler(request):
+        geo = request.url.params["geo"]
+        requests.append(geo)
+        if geo == "US":
+            return httpx.Response(200, text=international_rss)
+        return httpx.Response(200, text=RSS)
+
+    def is_relevant(items):
+        return any(item["term"] == "roof repair" for item in items)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = fetch_trends(s, client, is_relevant=is_relevant)
+
+    assert requests == ["BR-GO", "BR", "US"]
+    assert result["geo"] == "US" and result["items"][0]["geo"] == "US"
+
+
+def test_cached_trends_falls_through_irrelevant_feeds(db, monkeypatch):
+    s = reload_settings(monkeypatch, GOOGLE_TRENDS_RSS_ENABLED="true")
+    requests = []
+    international_rss = RSS.replace("preço do pedreiro", "roof repair")
+
+    def handler(request):
+        geo = request.url.params["geo"]
+        requests.append(geo)
+        if geo == "US":
+            return httpx.Response(200, text=international_rss)
+        return httpx.Response(200, text=RSS)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = cached_trends(
+        db, s, client=client,
+        is_relevant=lambda items: any(item["term"] == "roof repair" for item in items),
+    )
+
+    assert requests == ["BR-GO", "BR", "US"]
+    assert result["geo"] == "US"
+    assert result["searched_geos"] == ["BR-GO", "BR", "US"]
+
+
+def test_international_trend_keywords_and_antifraud_headlines():
+    assert match_theme("Black Friday") == "autonomos"
+    assert screen_trend("Black Friday", ["Guia para não cair em golpes"]) is None
+    assert screen_trend("golpe do Pix", []) is not None
 
 
 def test_suggestions_with_trends_and_fallback(db, monkeypatch):

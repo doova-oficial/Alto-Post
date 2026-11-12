@@ -372,6 +372,41 @@ def test_generated_image_omits_script_text_when_subtitles_are_rendered(db, monke
     assert asset.metadata_json["texts"][1]["text"] == "Tem alguém que sabe resolver."
 
 
+def test_server_render_changes_footage_and_framing_every_two_seconds(db, monkeypatch):
+    from app.services import video_service
+    from tests.conftest import reload_settings
+
+    settings = reload_settings(monkeypatch, VIDEO_TTS_ENABLED="false", VIDEO_GENERATED_IMAGE_COUNT="0")
+    candidates = [
+        video_service.VideoCandidate(
+            provider="pexels", provider_id=f"cut-{index}", title="Pexels footage",
+            creator="Pexels", landing_url=f"https://www.pexels.com/video/{index}/",
+            download_url=f"https://cdn.example/{index}.mp4", width=1080, height=1920,
+            duration=12, query="roof",
+        )
+        for index in range(2)
+    ]
+    monkeypatch.setattr(video_service, "search_videos", lambda *args, **kwargs: candidates)
+    monkeypatch.setattr(video_service, "_download",
+                        lambda _candidate, _settings, _client, path: path.write_bytes(b"video"))
+    rendered = {}
+    monkeypatch.setattr(video_service, "_render_video_sources",
+                        lambda sources, rows, *_args, **_kwargs: rendered.update(sources=sources, rows=rows))
+    monkeypatch.setattr(video_service, "_upload_to_cloudinary",
+                        lambda *_args, **_kwargs: ("https://cdn.example/rendered.mp4", "doova/videos/test"))
+
+    asset = video_service.create_video(
+        db, "chuva", "Chuva em Goiânia", "roof", settings,
+        render=True, generated_image_count=0,
+    )
+
+    segments = asset.metadata_json["segments"]
+    assert len(rendered["sources"]) == len(segments) == 6
+    assert [segment["start_seconds"] for segment in segments] == [0, 2, 4, 6, 8, 10]
+    assert [segment["end_seconds"] for segment in segments] == [2, 4, 6, 8, 10, 12]
+    assert all(segment["kind"] == "stock_video" for segment in segments)
+
+
 def test_ffmpeg_uses_image_loop_for_generated_cards(tmp_path):
     from app.services.video_service import _ffmpeg_loop_input
 
@@ -391,17 +426,18 @@ def test_ass_karaoke_marks_each_word_with_timing():
     assert "Chuva" in result and "chegou" in result
 
 
-def test_script_ends_with_doova_install_cta():
+def test_script_uses_short_hook_and_soft_cta():
     from app.services.video_service import _script_texts
 
     _, texts = _script_texts("chuva", "chuva")
 
-    assert texts[-1] == "Instale o app Doova e encontre ajuda ou ofereça seu serviço."
-    assert texts[1] != "Tem alguém que sabe resolver."
-    assert "calhas obstruídas" in texts[1]
+    assert texts[-1] == "Achei no app Doova; link na bio."
+    assert len(texts) == 5
+    assert len(texts[0].split()) <= 6 and not texts[0].endswith("?")
+    assert all(len(text.split()) <= 7 for text in texts)
 
 
-def test_trend_script_uses_observed_context_and_three_second_hook():
+def test_trend_script_returns_three_hooks_and_short_beats_with_timed_subtitles():
     from app.services.video_service import _script_texts, subtitle_plan
 
     class ScriptGroq:
@@ -411,10 +447,12 @@ def test_trend_script_uses_observed_context_and_three_second_hook():
 
         def chat_json(self, system, user, max_tokens):
             self.system, self.user = system, user
-            return {"hook": "A chuva revelou esse problema?", "beats": [
-                "Um telhado bem cuidado evita dor de cabeça.",
-                "Encontre profissionais da sua região no Doova.",
-            ]}
+            return {
+                "hooks": ["Goteira pequena vira dano maior", "Calha cheia causa infiltração",
+                          "Mancha no teto pede atenção"],
+                "beats": ["Confira telhas após tempo firme.", "Limpe calhas com cuidado.",
+                          "Um profissional pode localizar a causa.", "Achei no app Doova; link na bio."],
+            }
 
     groq = ScriptGroq()
     hook, rows = subtitle_plan(
@@ -422,29 +460,42 @@ def test_trend_script_uses_observed_context_and_three_second_hook():
         ["Previsão de chuva na região"], groq,
         [{"hook": "A goteira tem solução?", "theme_match": True,
           "avg_watch_time_over_duration": 0.72, "shares_over_reach": 0.03, "reach": 500}],
+        hook_variant_index=1,
     )
 
-    assert hook == rows[0]["text"] == "A chuva revelou esse problema?"
-    assert rows[0]["start"] == 0 and rows[0]["end"] == 3
+    assert hook == "Calha cheia causa infiltração"
+    assert rows[0]["text"].startswith(hook)
+    assert rows[0]["start"] == 0
+    assert all(1.5 <= row["end"] - row["start"] <= 2 for row in rows)
+    assert rows[-1]["end"] == 12
     assert "Previsão de chuva na região" in groq.user
     assert "A goteira tem solução?" in groq.user
     assert "observacionais" in groq.user
-    assert "até 3 segundos" in groq.system
     assert "audiência ampla" in groq.system
-    assert "emoção principal" in groq.system
-    assert "lacuna de curiosidade" in groq.system
+    assert "emoção específica" in groq.system
+    assert "curiosidade" in groq.system
     assert "Demonstre autoridade" in groq.system
-    assert rows[-1]["text"] == "Instale o app Doova e encontre ajuda ou ofereça seu serviço."
-    assert rows[-1]["end"] == 12
 
 
-def test_fallback_hook_varies_by_trend_for_same_theme():
+def test_fallback_hook_rotates_three_variations_for_same_theme():
     from app.services.video_service import _script_texts
 
-    chuva, _ = _script_texts("chuva", "chuva em Iporá")
-    calor, _ = _script_texts("chuva", "alerta de temporal no Centro-Oeste")
+    first, _ = _script_texts("chuva", "chuva em Iporá", hook_variant_index=0)
+    second, _ = _script_texts("chuva", "chuva em Iporá", hook_variant_index=1)
+    third, _ = _script_texts("chuva", "chuva em Iporá", hook_variant_index=2)
 
-    assert chuva != calor
+    assert len({first, second, third}) == 3
+
+
+def test_fallback_scripts_obey_word_limits_for_every_theme():
+    from app.services.video_service import HOOKS, _script_texts
+
+    for theme in HOOKS:
+        hook, texts = _script_texts(theme, f"tema {theme}")
+        assert len(texts) == 5
+        assert hook == texts[0] and len(hook.split()) <= 6
+        assert all(len(text.split()) <= 7 for text in texts)
+        assert 25 <= len(" ".join(texts).split()) <= 30
 
 
 def test_recent_video_performance_context_ignores_metrics_before_seven_days(db):

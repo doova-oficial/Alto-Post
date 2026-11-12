@@ -15,11 +15,11 @@ import logging
 from datetime import timedelta
 from typing import Any, Callable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.config import Settings, get_settings
 from app.database import session_scope, utcnow
-from app.models import Post, PostStatus
+from app.models import Post, PostStatus, VideoHookExperiment
 from app.services.content_service import set_status
 from app.services.state import acquire_lock, get_state, is_paused, release_lock, set_state
 
@@ -105,7 +105,20 @@ def job_video_publish() -> Any:
         targets = s.video_publish_targets
         pending = unpublished_rendered_videos(db, targets=targets)
         published, errors, deferred, processing = [], [], [], []
-        for asset in pending:
+        for asset_index, asset in enumerate(pending):
+            last_video_post = db.scalar(select(VideoHookExperiment.published_at).where(
+                VideoHookExperiment.published_at.is_not(None),
+            ).order_by(VideoHookExperiment.published_at.desc()).limit(1))
+            if (last_video_post is not None
+                    and utcnow() - last_video_post < timedelta(minutes=s.min_minutes_between_posts)):
+                deferred.extend(item.id for item in pending[asset_index:])
+                break
+            recent_video_posts = db.scalar(select(func.count()).select_from(VideoHookExperiment).where(
+                VideoHookExperiment.published_at >= utcnow() - timedelta(hours=24),
+            )) or 0
+            if recent_video_posts >= s.video_auto_max_per_day:
+                deferred.extend(item.id for item in pending[asset_index:])
+                break
             linked_post = db.scalar(select(Post).where(Post.video_asset_id == asset.id))
             if linked_post is not None:
                 now = utcnow()

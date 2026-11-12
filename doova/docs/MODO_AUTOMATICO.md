@@ -11,8 +11,16 @@ Com `REQUIRE_MANUAL_APPROVAL=false` (padrão), o sistema cria, confere, aprova, 
 | Aprovação | automática quando legenda, arte e checagens estão ok | ao criar e `maintenance` |
 | Agenda | próximo horário livre, escolhido pelo aprendizado de horários | `maintenance` |
 | Publicação | contêiner → status → `media_publish`, com tentativas e deduplicação | `publish` (1 min) |
-| Assuntos do momento | busca, triagem, foto e publicação (no máximo 1 por dia) | `trends_auto` (6 h) |
+| Assuntos do momento | busca e triagem; uma tendência aprovada pode criar um post com foto e Reel vinculado | `trends_auto` (conforme intervalo configurado) |
+| Reels perenes | quando vídeos estão habilitados, completa a meta diária com temas do catálogo, até `VIDEO_AUTO_MAX_PER_DAY` (padrão 2; máximo 2) | `trends_auto` |
 | Vigilância | alertas e pausa automática | `watchdog` (15 min) |
+
+O automático não cria posts genéricos com foto: eles só são gerados quando uma tendência
+passa pelos filtros. Se não houver tendência aprovada, a meta pode ser preenchida apenas
+com Reels perenes do catálogo. A busca tenta Goiás, Brasil e, se ainda não houver uma
+tendência de serviço elegível, uma amostra dos feeds dos EUA, México, Reino Unido, Índia,
+Japão e Austrália. O Google Trends não fornece um RSS mundial agregado; cada item mantém
+o país de origem, e os termos internacionais são filtrados com palavras-chave em inglês.
 
 ## Checagens automáticas (no lugar da revisão)
 
@@ -21,6 +29,7 @@ Com `REQUIRE_MANUAL_APPROVAL=false` (padrão), o sistema cria, confere, aprova, 
 - **Foto:** licença comercial, crédito na arte e na legenda, e recusa automática se o título ou as tags indicarem pessoas ou marcas (`PHOTO_AUTO_CHECK`).
 - **Assunto do momento:** triado ao ser criado e de novo logo antes de publicar, com as manchetes mais recentes do Google Trends. Se ganhou um lado sensível, a publicação é cancelada. Expira em 48 h.
 - **Antes de publicar:** imagem presente, legenda revalidada, conteúdo não duplicado, limites diários e intervalo mínimo.
+- **Reels:** no máximo `VIDEO_AUTO_MAX_PER_DAY` publicações em 24 horas; as publicações seguem horários diferentes da agenda configurada.
 
 O que não passar fica em `needs_review` e **não é publicado**; a vigilância avisa você.
 

@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.database import utcnow
-from app.models import ContentKind, Post, PostStatus
+from app.models import ContentKind, Post, PostStatus, VideoAsset, VideoHookExperiment
 from app.services.content_service import ContentError, ContentService, PostInput, set_status
 from app.services.groq_service import CaptionGenerationError, GroqCaptionService
 from app.services.image_search import find_photo
@@ -50,58 +50,67 @@ SUBTITLES = {
 TREND_THEMES: dict[str, dict[str, Any]] = {
     "calor": {"label": "manutenção de ar-condicionado e ventiladores", "audience": "contratantes",
               "keywords": ["calor", "onda de calor", "temperatura", "ar condicionado", "ar-condicionado",
-                           "ventilador", "climatizador"],
+                           "ventilador", "climatizador", "heatwave", "hot weather", "air conditioner",
+                           "ac repair", "fan"],
               "query_en": "air conditioner repair", "query_pt": "ar condicionado manutenção",
               "title": "Calor apertando? O ar-condicionado está em dia?"},
     "chuva": {"label": "conserto de telhado e calhas", "audience": "contratantes",
-              "keywords": ["chuva", "chuvas", "temporal", "tempestade", "goteira", "frente fria"],
+              "keywords": ["chuva", "chuvas", "temporal", "tempestade", "goteira", "frente fria",
+                           "rain", "storm", "thunderstorm", "roof leak", "roof repair", "gutter"],
               "query_en": "roof repair", "query_pt": "telhado conserto",
               "title": "Choveu e apareceu goteira?"},
     "festas": {"label": "comida, bolos e decoração para festas", "audience": "contratantes",
                "keywords": ["festa", "festas", "natal", "ano novo", "reveillon", "carnaval", "festa junina",
                             "aniversario", "dia das maes", "dia dos pais", "dia das criancas", "casamento",
-                            "formatura", "pascoa", "confraternizacao"],
+                            "formatura", "pascoa", "confraternizacao", "party", "christmas", "new year",
+                            "wedding", "birthday", "graduation"],
                "query_en": "party food buffet", "query_pt": "festa salgados",
                "title": "Vai ter festa? Precisa de ajuda com comida ou decoração?"},
     "estudos": {"label": "aulas particulares e reforço escolar", "audience": "ambos",
-                "keywords": ["enem", "vestibular", "volta as aulas", "simulado", "provas", "redacao enem"],
+                "keywords": ["enem", "vestibular", "volta as aulas", "simulado", "provas", "redacao enem",
+                             "exam", "school", "tutoring", "student"],
                 "query_en": "student studying tutor", "query_pt": "estudante estudando",
                 "title": "Precisa de aulas de reforço?"},
     "energia": {"label": "serviços de eletricista", "audience": "contratantes",
                 "keywords": ["conta de luz", "energia eletrica", "falta de energia", "bandeira tarifaria",
-                             "eletricista", "queda de energia"],
+                             "eletricista", "queda de energia", "power outage", "power cut", "electrician",
+                             "electrical repair"],
                 "query_en": "electrician working", "query_pt": "eletricista",
                 "title": "Precisa de um eletricista?"},
     "agua": {"label": "serviços de encanador", "audience": "contratantes",
              "keywords": ["falta de agua", "falta d agua", "vazamento", "encanador", "caixa d agua",
-                          "conta de agua"],
+                          "conta de agua", "water leak", "plumber", "plumbing", "pipe burst"],
              "query_en": "plumber fixing pipe", "query_pt": "encanador",
              "title": "Vazamento ou cano entupido?"},
     "pets": {"label": "banho, tosa e cuidado com pets", "audience": "contratantes",
              "keywords": ["pet", "pets", "cachorro", "cachorros", "gato", "gatos", "dia dos animais",
-                          "dia do cachorro"],
+                          "dia do cachorro", "dog", "cat", "pet grooming"],
              "query_en": "dog grooming", "query_pt": "banho e tosa cachorro",
              "title": "Precisa de alguém para cuidar do seu pet?"},
     "autonomos": {"label": "trabalho autônomo e divulgação de serviços", "audience": "prestadores",
                   "keywords": ["mei", "microempreendedor", "autonomo", "autonomos", "trabalho informal",
-                               "dia do trabalhador", "dia do trabalho", "empreendedorismo"],
+                               "dia do trabalhador", "dia do trabalho", "empreendedorismo", "freelancer",
+                               "self-employed", "small business", "black friday"],
                   "query_en": "craftsman workshop", "query_pt": "trabalhador autônomo",
                   "title": "Trabalha por conta própria?"},
     "limpeza": {"label": "faxina e limpeza", "audience": "contratantes",
-                "keywords": ["faxina", "diarista", "limpeza de casa", "dia da faxina"],
+                "keywords": ["faxina", "diarista", "limpeza de casa", "dia da faxina", "cleaning",
+                             "house cleaning", "cleaner"],
                 "query_en": "house cleaning", "query_pt": "limpeza casa",
                 "title": "Casa precisando de uma faxina?"},
     "jardim": {"label": "jardinagem, capina e poda", "audience": "contratantes",
-               "keywords": ["primavera", "jardinagem", "jardim", "quintal", "capina", "poda"],
+               "keywords": ["primavera", "jardinagem", "jardim", "quintal", "capina", "poda",
+                            "garden", "gardening", "lawn", "landscaping"],
                "query_en": "gardener lawn mowing", "query_pt": "jardinagem",
                "title": "Quintal precisando de capina ou poda?"},
     "veiculos": {"label": "mecânica e revisão de carros e motos", "audience": "contratantes",
                  "keywords": ["ipva", "revisao do carro", "mecanico", "oficina mecanica", "troca de oleo",
-                              "licenciamento"],
+                              "licenciamento", "car mechanic", "car repair", "oil change", "auto repair"],
                  "query_en": "car mechanic", "query_pt": "mecânico carro",
                  "title": "Carro ou moto precisando de revisão?"},
     "reforma": {"label": "reforma, pintura e pequenos reparos", "audience": "contratantes",
-                "keywords": ["reforma", "pintura de casa", "pedreiro", "construcao civil", "material de construcao"],
+                "keywords": ["reforma", "pintura de casa", "pedreiro", "construcao civil", "material de construcao",
+                             "renovation", "home improvement", "house painting", "contractor"],
                 "query_en": "house painter painting wall", "query_pt": "pintor parede",
                 "title": "Pensando em reformar ou pintar a casa?"},
 }
@@ -115,14 +124,19 @@ SENSITIVE = [
     "terroris*", "bomba*", "explos*", "incendio*", "queimada*", "enchente*", "alagamento*", "deslizamento*",
     "desabamento*", "desaparecid*", "naufrag*", "eleic*", "eleitor*", "candidat*", "presidente*", "lula",
     "bolsonaro", "partido*", "stf", "senado", "senador*", "deputad*", "vereador*", "prefeit*", "governador*",
-    "ministr*", "politic*", "impeachment", "cpi", "golpe*", "protesto*", "greve*", "religi*", "igreja*",
+    "ministr*", "politic*", "impeachment", "cpi", "golpe do*", "protesto*", "greve*", "religi*", "igreja*",
     "aborto*", "epidemia*", "pandemia*", "surto*", "covid*", "dengue", "virus", "doenca*", "cancer", "hospital*",
     "internad*", "suicid*", "aposta*", "bet", "bets", "cassino*", "tigrinho", "loteria*", "mega sena",
     "megasena", "lotofacil", "sexo", "nude*", "porn*", "escandalo*", "polemica*", "briga*", "demiss*",
     "falencia*", "racis*", "homofob*", "preconceito*",
+    "death*", "dead", "killed", "murder*", "police", "shooting*", "war", "attack*", "election*", "president*",
+    "politic*", "religion*", "church*", "disease*", "virus*", "covid", "cancer", "hospital*", "suicide*",
+    "gambling", "betting", "lottery", "casino*", "nude", "porn*", "scam*", "fraud*", "loan*", "salary",
+    "income", "earthquake*", "hurricane*", "terror*", "explosion*", "assault*", "abuse*", "robbery*", "theft",
+    "drugs", "celebrity", "celebrities",
     # dinheiro e benefícios: viram "promessa de renda" com facilidade e mudam rápido
     "auxilio*", "beneficio*", "emprestimo*", "credito*", "financiamento*", "bolsa familia", "inss", "fgts",
-    "imposto*", "receita federal", "golpe do*", "pix", "dinheiro", "salario*", "renda", "indeniza*",
+    "imposto*", "receita federal", "pix", "dinheiro", "salario*", "renda", "indeniza*",
 ]
 _MONEY_RE = re.compile(r"(r\$|\b\d[\d.,]*\s*(mil|milhao|milhoes|bi|bilhao|reais)\b)")
 
@@ -143,6 +157,10 @@ def _pattern(words: list[str]) -> re.Pattern:
 
 
 _SENSITIVE_RE = _pattern(SENSITIVE)
+_FRAUD_ADVISORY_RE = re.compile(
+    r"\b(?:nao cair em golpes|evitar golpes|prevencao contra golpes|"
+    r"avoid scams|scam prevention|avoid fraud|fraud prevention)\b"
+)
 _THEME_RES = {k: _pattern(v["keywords"]) for k, v in TREND_THEMES.items()}
 
 
@@ -155,7 +173,7 @@ def screen_trend(term: str, news: list[str] | None = None, settings: Settings | 
         if _MONEY_RE.search((t or "").lower()) or _MONEY_RE.search(norm(t)):
             where = "no termo" if t is term else "em manchete relacionada"
             return f"valor em dinheiro {where} (evita parecer promessa de renda)"
-        n = norm(t)
+        n = _FRAUD_ADVISORY_RE.sub(" ", norm(t))
         for p in pats:
             m = p.search(n)
             if m:
@@ -205,8 +223,30 @@ def _recent_count(db: Session, hours: int) -> int:
 
 def _recent_reel_count(db: Session, hours: int = 24) -> int:
     cutoff = utcnow() - timedelta(hours=hours)
-    return db.scalar(select(func.count()).select_from(Post).where(
-        Post.video_asset_id.is_not(None), Post.created_at >= cutoff)) or 0
+    return db.scalar(select(func.count()).select_from(VideoAsset).where(
+        VideoAsset.created_at >= cutoff)) or 0
+
+
+def _next_hook_variant(db: Session) -> int:
+    total = db.scalar(select(func.count()).select_from(VideoAsset)) or 0
+    return int(total) % 3
+
+
+def _record_hook_experiment(db: Session, post: Post, video) -> VideoHookExperiment:
+    existing = db.scalar(select(VideoHookExperiment).where(VideoHookExperiment.post_id == post.id))
+    if existing is not None:
+        return existing
+    metadata = video.metadata_json or {}
+    experiment = VideoHookExperiment(
+        post_id=post.id,
+        video_id=video.id,
+        variation=int(metadata.get("hook_variation") or 1),
+        hook_text=video.hook,
+        recorded_at=post.created_at,
+    )
+    db.add(experiment)
+    db.flush()
+    return experiment
 
 
 def _recent(db: Session, column, value: str, days: int) -> bool:
@@ -226,18 +266,35 @@ def run_trend_auto(db: Session, settings: Settings | None = None, force: bool = 
         return out
     used = (_recent_reel_count(db) if s.video_enabled and s.video_search_configured
             else _recent_count(db, 24))
-    quota = s.trend_auto_max_per_day - used
+    quota_limit = min(s.trend_auto_max_per_day, s.video_auto_max_per_day) \
+        if s.video_enabled and s.video_search_configured else s.trend_auto_max_per_day
+    quota = quota_limit - used
     if create and quota <= 0:
-        out["skipped"] = f"limite de {s.trend_auto_max_per_day} publicação(ões) de assunto do momento em 24 h atingido"
+        out["skipped"] = f"limite de {quota_limit} publicação(ões) de assunto do momento em 24 h atingido"
         return out
-    if items is None:
-        from app.services.trends_service import cached_trends
-
-        data = cached_trends(db, s, client=client)
-        items, out["trends_error"] = data.get("items", []), data.get("error")
     use_groq = s.trend_use_groq and s.groq_configured
     if use_groq and groq is None:
         groq = GroqCaptionService(s)
+
+    if items is None:
+        from app.services.trends_service import cached_trends
+
+        def has_eligible_theme(feed: list[dict[str, Any]]) -> bool:
+            for item in feed:
+                term = str(item.get("term") or "").strip()
+                news = [str(headline) for headline in (item.get("news") or []) if headline]
+                if not term or screen_trend(term, news, s):
+                    continue
+                theme = match_theme(term)
+                if theme and not _recent(db, Post.trend_term, term, 7) \
+                        and not _recent(db, Post.theme_key, f"trend:{theme}", 3):
+                    return True
+            return False
+
+        data = cached_trends(db, s, client=client, is_relevant=has_eligible_theme)
+        items, out["trends_error"] = data.get("items", []), data.get("error")
+        out["trends_geo"] = data.get("geo")
+        out["trends_searched_geos"] = data.get("searched_geos", [])
     seen: set[str] = set()
     for it in items:
         term = (it.get("term") or "").strip()
@@ -286,6 +343,7 @@ def run_trend_auto(db: Session, settings: Settings | None = None, force: bool = 
             continue
         pending_video_asset = None
         linked_video_asset = None
+        trend_video_asset = None
         t = TREND_THEMES[theme]
         photo = None
         if android_video_mode:
@@ -301,7 +359,9 @@ def run_trend_auto(db: Session, settings: Settings | None = None, force: bool = 
                 from app.services.video_service import VideoSearchError, create_video, public
 
                 video = create_video(db, theme, term, term, s, client=client, render=not android_video_mode,
-                                     trend_context=news[:3], script_groq=groq if use_groq else None)
+                                     trend_context=news[:3], script_groq=groq if use_groq else None,
+                                     hook_variant_index=_next_hook_variant(db), prefer_new=True)
+                trend_video_asset = video
                 if android_video_mode:
                     linked_video_asset = video
                 if android_video_mode and not video.video_url:
@@ -343,6 +403,8 @@ def run_trend_auto(db: Session, settings: Settings | None = None, force: bool = 
             continue
         if linked_video_asset is not None:
             post.video_asset_id = linked_video_asset.id
+        if trend_video_asset is not None:
+            _record_hook_experiment(db, post, trend_video_asset)
         if pending_video_asset is not None:
             from app.services.video_worker import enqueue_video_render
 
@@ -373,9 +435,10 @@ def run_catalog_reel_auto(db: Session, settings: Settings | None = None,
         out["skipped"] = "VIDEO_WORKER_TOKEN não configurado (mínimo de 32 caracteres)"
         return out
 
-    quota = s.trend_auto_max_per_day - _recent_reel_count(db)
+    quota_limit = min(s.trend_auto_max_per_day, s.video_auto_max_per_day)
+    quota = quota_limit - _recent_reel_count(db)
     if quota <= 0:
-        out["skipped"] = f"meta diária de {s.trend_auto_max_per_day} Reels em 24 h atingida"
+        out["skipped"] = f"meta diária de {quota_limit} Reels em 24 h atingida"
         return out
 
     from app.services import library
@@ -400,14 +463,14 @@ def run_catalog_reel_auto(db: Session, settings: Settings | None = None,
             subtitle = str(entry.get("subtitle") or "").strip()
             details.append(subtitle or str(entry.get("objective") or "Conheça o Doova."))
         details = details[:2]
-        script_texts = [title[:120], *(value[:180] for value in details),
-                        "Instale o app Doova e encontre ajuda ou ofereça seu serviço."]
-        script_override = (title[:120], script_texts)
+        from app.services.groq_service import GroqCaptionService
+        script_groq = GroqCaptionService(s) if s.trend_use_groq and s.groq_configured else None
         render = s.video_render_mode != "android"
         try:
             video = create_video(
                 db, "autonomos", title, "small business owner working", s,
-                render=render, script_override=script_override, prefer_new=True,
+                render=render, trend_context=details, script_groq=script_groq, prefer_new=True,
+                hook_variant_index=_next_hook_variant(db),
             )
         except VideoSearchError as exc:
             row.update(decision="erro", reason=f"não foi possível gerar Reel: {exc}")
@@ -437,6 +500,7 @@ def run_catalog_reel_auto(db: Session, settings: Settings | None = None,
             continue
 
         post.video_asset_id = video.id
+        _record_hook_experiment(db, post, video)
         if not video.video_url:
             job = enqueue_video_render(db, video)
             row["video_render_job"] = {"id": job.id, "status": job.status}
@@ -472,7 +536,10 @@ def trend_recheck(db: Session, post: Post, settings: Settings | None = None) -> 
     try:
         from app.services.trends_service import cached_trends
 
-        for it in cached_trends(db, s, max_age_hours=3).get("items", []):
+        for it in cached_trends(
+            db, s, max_age_hours=3,
+            is_relevant=lambda items: any(norm(item.get("term") or "") == norm(term) for item in items),
+        ).get("items", []):
             if norm(it.get("term") or "") == norm(term):
                 news += [n for n in (it.get("news") or []) if n]
     except Exception as e:  # sem rede: confere só o termo
